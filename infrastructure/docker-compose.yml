@@ -1,0 +1,63 @@
+# Local development infrastructure: PostgreSQL + Redis.
+#   docker compose -f infrastructure/docker-compose.yml up -d
+# The `app` profile also runs the API, worker and web (production builds):
+#   docker compose -f infrastructure/docker-compose.yml --profile app up -d --build
+name: lifepilot
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lifepilot
+      POSTGRES_PASSWORD: lifepilot
+      POSTGRES_DB: lifepilot
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lifepilot"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # AOF persistence so scheduled reminder jobs survive a Redis restart.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports: ["6379:6379"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  api:
+    profiles: ["app"]
+    build: { context: .., dockerfile: infrastructure/Dockerfile, target: api }
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://lifepilot:lifepilot@postgres:5432/lifepilot
+      REDIS_URL: redis://redis:6379
+    ports: ["4000:4000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    profiles: ["app"]
+    build: { context: .., dockerfile: infrastructure/Dockerfile, target: worker }
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://lifepilot:lifepilot@postgres:5432/lifepilot
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  web:
+    profiles: ["app"]
+    build: { context: .., dockerfile: infrastructure/Dockerfile, target: web }
+    ports: ["8080:80"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
+  redisdata:

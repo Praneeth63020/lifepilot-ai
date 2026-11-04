@@ -1,0 +1,25 @@
+{
+  "name": "lifepilot-ai",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @lifepilot/api --filter @lifepilot/worker --filter @lifepilot/web dev",
+    "dev:api": "pnpm --filter @lifepilot/api dev",
+    "dev:worker": "pnpm --filter @lifepilot/worker dev",
+    "dev:web": "pnpm --filter @lifepilot/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --workspace-concurrency=1 test",
+    "test:e2e": "pnpm --filter @lifepilot/web test:e2e",
+    "db:generate": "pnpm --filter @lifepilot/db generate",
+    "db:migrate": "pnpm --filter @lifepilot/db migrate:deploy",
+    "db:migrate:dev": "pnpm --filter @lifepilot/db migrate:dev",
+    "db:seed": "pnpm --filter @lifepilot/api seed",
+    "sounds": "node scripts/generate-sounds.mjs",
+    "audit": "pnpm audit --prod"
+  }
+}
