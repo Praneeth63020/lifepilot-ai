@@ -1,0 +1,20 @@
+# Railway API service. Build from the repository root.
+FROM node:22-bookworm-slim AS build
+RUN corepack enable
+WORKDIR /repo
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @lifepilot/api build
+RUN pnpm --filter @lifepilot/api deploy --prod --legacy --config.node-linker=hoisted /out/api \
+ && cp -r packages/db/migrations /out/api/migrations
+
+FROM node:22-bookworm-slim AS runtime
+ENV NODE_ENV=production MIGRATIONS_DIR=/app/migrations API_PORT=4000
+WORKDIR /app
+COPY --from=build /out/api/node_modules ./node_modules
+COPY --from=build /out/api/dist ./dist
+COPY --from=build /out/api/migrations ./migrations
+COPY --from=build /out/api/package.json ./package.json
+USER node
+EXPOSE 4000
+CMD ["sh", "-c", "node dist/scripts/migrate.js && node dist/server.js"]
