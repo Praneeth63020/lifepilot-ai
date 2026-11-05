@@ -53,6 +53,156 @@ Key capabilities include:
 
 ---
 
+## OpenAI Integration Architecture
+
+LifePilot AI includes an OpenAI integration in its backend AI extraction layer.
+
+The application uses the official OpenAI Node.js SDK and Responses API.
+
+**Implementation:** `packages/core/src/ai/extractor.ts`
+
+### Request and processing flow
+
+1. Email content, sender information, subject, and user timezone are prepared for extraction.
+2. The OpenAI client sends a request using `responses.create()`.
+3. The request uses the configured model and strict JSON Schema structured output.
+4. Returned JSON is validated using Zod.
+5. Extracted deadlines are checked against the original email using application-side verification.
+6. Prompt-injection detection and untrusted-input handling protect the extraction workflow.
+7. Timeouts and provider errors trigger a deterministic rule-based fallback.
+
+### Implementation files
+
+| File | Responsibility |
+|---|---|
+| `packages/core/src/ai/extractor.ts` | OpenAI SDK integration, request construction, structured output, validation, and fallback |
+| `packages/core/src/config.ts` | Application and AI configuration |
+| `packages/core/src/bootstrap.ts` | Core service initialization |
+| `packages/core/scripts/smoke-openai.ts` | Live API smoke-test script |
+
+The OpenAI client is configured with the API key, selected model, and SDK retry settings. The extraction request also uses an application-level timeout and disables response storage with `store: false`.
+
+### Testing and verification
+
+Mock-based tests are used to validate extraction behavior without requiring successful external API requests.
+
+A separate smoke-test script attempts a real OpenAI request using environment-configured credentials.
+
+**Current verification status:**
+
+- Official OpenAI SDK integration: implemented.
+- Responses API request construction: implemented.
+- Structured JSON output and Zod validation: implemented.
+- Deadline verification and deterministic fallback: implemented.
+- Mock-based tests: available.
+- Successful live API response: not yet verified.
+
+The live API test was attempted but returned HTTP 429 because the API account had no remaining credits. Live API validation remains pending.
+
+---
+
+## Google API Integration Architecture
+
+LifePilot AI integrates with Gmail and Google Calendar through Google's REST APIs.
+
+The implementation uses native HTTP requests through an injectable `fetch` function rather than the Google Node.js client SDK.
+
+### Integration files
+
+| File | Responsibility |
+|---|---|
+| `packages/core/src/google/client.ts` | OAuth, PKCE, token exchange, refresh, revocation, and shared API requests |
+| `packages/core/src/google/gmail.ts` | Gmail REST API requests and email parsing |
+| `packages/core/src/google/calendar.ts` | Google Calendar REST API requests and event mapping |
+| `packages/core/src/services/connections.ts` | OAuth state management, credential storage, and synchronization |
+| `apps/api/src/routes/integrations.ts` | Integration API routes and OAuth callback |
+
+### OAuth 2.0 and PKCE
+
+The Google authorization flow includes:
+
+- OAuth 2.0 authorization URL generation.
+- Random state generation and SHA-256 hashing before database storage.
+- State expiration after 10 minutes.
+- Single-use OAuth state validation.
+- Binding authorization state to the authenticated user.
+- PKCE S256 challenge generation.
+- Encrypted storage of the PKCE verifier.
+- Server-side authorization-code exchange.
+- Required OAuth scope validation.
+- Access-token and refresh-token handling.
+- Token revocation and account disconnection.
+
+### Credential security
+
+Google credentials and PKCE verifiers are encrypted before database storage.
+
+The encryption implementation is in `packages/core/src/crypto.ts` and uses AES-256-GCM with a randomly generated initialization vector and authentication tag.
+
+The encryption key is supplied through `TOKEN_ENCRYPTION_KEY` as a base64-encoded 32-byte key.
+
+Additional security and reliability measures include:
+
+- Refreshing access tokens when they approach expiration.
+- Persisting refreshed tokens in encrypted form.
+- Detecting revoked or rejected authorization.
+- Clearing credentials when an account is marked revoked.
+- Attempting Google token revocation during disconnection.
+- Keeping provider credentials on the server.
+
+### Gmail integration
+
+The Gmail integration is read-only and implements:
+
+- Retrieving Gmail profile information.
+- Listing recent email messages.
+- Filtering promotions, social messages, and chats.
+- Handling paginated results.
+- Retrieving full message details.
+- Incremental synchronization using the Gmail History API.
+- Handling expired history identifiers.
+- Parsing sender, subject, date, labels, and message content.
+- Supporting plain-text and HTML email content.
+- Converting HTML messages into readable text.
+- Limiting stored body excerpts to 4,000 characters.
+
+Email information is processed through the application's smart inbox and AI extraction workflow.
+
+### Google Calendar integration
+
+The Calendar integration is read-only and implements:
+
+- Retrieving the primary calendar.
+- Fetching events within a specified date range.
+- Handling paginated responses.
+- Expanding recurring events into individual instances.
+- Ordering events by start time.
+- Mapping timed events into JavaScript dates.
+- Handling all-day events using the calendar timezone and Luxon.
+- Preserving event titles, descriptions, locations, statuses, and links.
+
+Calendar information is used by the application's scheduling and conflict-detection functionality.
+
+### Google integration testing
+
+Automated integration tests use mocked Google endpoints.
+
+The tests cover OAuth parameters, PKCE, OAuth state validation, authorization-code exchange, encrypted token storage, and token refresh behavior.
+
+**Current verification status:**
+
+- Google OAuth and PKCE implementation: implemented.
+- OAuth state validation: implemented.
+- Encrypted credential storage: implemented.
+- Gmail REST API integration: implemented.
+- Google Calendar REST API integration: implemented.
+- Mock-based integration tests: available.
+- Real Google account authorization and synchronization: validation pending.
+
+Mocked endpoint tests do not establish successful synchronization with a real Google account.
+
+---
+
 ## Technology Stack
 
 ### Frontend
