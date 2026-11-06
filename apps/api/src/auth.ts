@@ -59,7 +59,7 @@ export async function destroySession(ctx: CoreContext, req: Request, res: Respon
 
 /** Resolve the session cookie (if any) into req.userId. Never trusts a client-supplied user id. */
 export function sessionMiddleware(ctx: CoreContext): RequestHandler {
-  return async (req, _res, next) => {
+  return async (req, res, next) => {
     const token = req.cookies?.[SESSION_COOKIE];
     if (typeof token === "string" && token.length > 20) {
       const id = sha256(token);
@@ -68,10 +68,18 @@ export function sessionMiddleware(ctx: CoreContext): RequestHandler {
         req.userId = s.userId;
         req.sessionId = s.id;
         if (ctx.now().getTime() - s.lastSeenAt.getTime() > 5 * 60_000) {
+          const now = ctx.now();
+
           await ctx.db
             .update(sessions)
-            .set({ lastSeenAt: ctx.now(), expiresAt: new Date(ctx.now().getTime() + SESSION_TTL_MS) })
+            .set({
+              lastSeenAt: now,
+              expiresAt: new Date(now.getTime() + SESSION_TTL_MS),
+            })
             .where(eq(sessions.id, s.id));
+
+          // Renew the browser cookie along with the database session.
+          res.cookie(SESSION_COOKIE, token, cookieOptions(ctx));
         }
       }
     }
