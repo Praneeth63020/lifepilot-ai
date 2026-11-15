@@ -2,11 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
 import { Bell, CalendarDays, CheckSquare, Compass, Inbox, LayoutDashboard, LogOut, Menu, Settings, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import type { NotificationDTO } from "@lifepilot/shared";
 import { api } from "../api";
 import { disablePush } from "../lib/push";
 import { useSession } from "../session";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { NotificationWatcher } from "./NotificationWatcher";
 import { Logo } from "./Logo";
 
@@ -26,8 +27,12 @@ export function DemoBanner() {
   if (!config?.demoMode && !demoData) return null;
   return (
     <div role="note" className="border-b border-warn/30 bg-warn/10 px-4 py-1.5 text-center text-xs text-warn">
-      <strong>Demo mode</strong> — {demoData ? "this account shows synthetic emails and calendar events. " : ""}No real Gmail or Google Calendar account is connected
-      {config?.aiProvider === "mock" ? "; AI features use the built-in rule-based engine." : "."}
+      <strong>Demo mode</strong>
+      <span className="sm:hidden"> — {demoData ? "synthetic emails and events" : "no real Google account connected"}{config?.aiProvider === "mock" ? ", rule-based AI" : ""}.</span>
+      <span className="hidden sm:inline">
+        {" "}— {demoData ? "this account shows synthetic emails and calendar events. " : ""}No real Gmail or Google Calendar account is connected
+        {config?.aiProvider === "mock" ? "; AI features use the built-in rule-based engine." : "."}
+      </span>
     </div>
   );
 }
@@ -64,6 +69,7 @@ function NavItems({ onNavigate, unseen }: { onNavigate?: () => void; unseen: num
 export function AppLayout(): ReactNode {
   const { me, startNewSession } = useSession();
   const nav = useNavigate();
+  const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
   const unseen = useQuery({
     queryKey: ["notifications", "unseen"],
@@ -89,15 +95,16 @@ export function AppLayout(): ReactNode {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <DemoBanner />
       <NotificationWatcher />
       <div className="flex flex-1">
-        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col gap-4 border-r border-line bg-surface p-4 lg:flex">
+        {/* Full-height sidebar: the demo banner lives in the content column so it can't push the sidebar's footer off-screen. */}
+        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r border-line bg-surface p-4 lg:flex">
           <Logo />
           <NavItems unseen={count} />
           {footer}
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
+          <DemoBanner />
           <header className="flex items-center justify-between border-b border-line bg-surface px-4 py-3 lg:hidden">
             <Logo />
             <button aria-label="Open menu" onClick={() => setOpen(true)} className="rounded-lg p-2 hover:bg-surface-2">
@@ -119,7 +126,10 @@ export function AppLayout(): ReactNode {
             </div>
           )}
           <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 lg:px-8">
-            <Outlet />
+            {/* A crash in one page keeps the navigation usable; navigating away clears it. */}
+            <ErrorBoundary resetKey={pathname}>
+              <Outlet />
+            </ErrorBoundary>
           </main>
         </div>
       </div>

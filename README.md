@@ -2,7 +2,7 @@
 
 **An AI-powered personal productivity assistant that brings tasks, email, calendar events, and reminders together into one realistic daily plan.**
 
-<sub>🚧 **Status: Actively Under Development | Phase 1**</sub>
+<sub>🚧 **Status: Actively Under Development | Phase 2: Stability and Improvements**</sub>
 
 LifePilot AI is an evolving personal productivity platform that I am actively building, testing, and improving.
 
@@ -37,15 +37,16 @@ Key capabilities include:
 | Email/password authentication, verification, password reset, and sessions | Implemented and tested |
 | Onboarding (timezone, working hours, sleep hours, quiet hours, reminder preferences) | Implemented |
 | Task management: CRUD, completion, subtasks, recurrence, tags, search, filters, sorting, and postponement | Implemented and tested |
+| Projects: create, rename, colour, assign tasks, filter by project, open-task counts | Implemented and tested |
 | Daily planning engine: prioritized top three tasks, scheduling, preparation blocks, breaks, overload warnings, and replanning | Implemented and tested |
 | Calendar: day, week, month views, local events, conflict detection, and alternative time suggestions | Implemented |
 | Smart inbox: email categories, importance scoring, and deadline extraction | Implemented and tested |
 | Prompt-injection handling and email-based deadline verification | Implemented and tested |
 | Persistent reminders using BullMQ and PostgreSQL | Implemented and tested |
 | In-app notifications with three original notification sounds | Implemented |
-| Web push notifications using VAPID | Implemented, device verification pending |
-| Gmail and Google Calendar OAuth integrations | Tested against mocked Google endpoints; real-service validation pending |
-| OpenAI structured information extraction with fallback | Tested with a mock client; real API validation pending |
+| Web push notifications using VAPID | Implemented, device verification pending ([guide](docs/validation.md#web-push)) |
+| Gmail and Google Calendar OAuth integrations | Tested against mocked Google endpoints; real-service validation pending ([guide](docs/validation.md#google-gmail-and-calendar)) |
+| OpenAI structured information extraction with fallback | Real API key verified and fallback confirmed on a live error (2026-11-15); success path pending account credits ([guide](docs/validation.md#openai)) |
 | Demo mode with synthetic data and mock AI | Implemented |
 | Data export, account deletion, and imported-data removal | Implemented and tested |
 
@@ -274,7 +275,8 @@ lifepilot-ai/
 │   ├── api
 │   ├── deployment
 │   ├── railway-demo-deployment
-│   └── security
+│   ├── security
+│   └── validation
 │
 ├── .env.example
 ├── package.json
@@ -438,15 +440,15 @@ LifePilot AI is being developed incrementally. The following roadmap represents 
 
 ### Phase 2: Stability and Improvements
 
-- [ ] Validate Google integrations with real accounts.
-- [ ] Validate OpenAI integration with the real API.
-- [ ] Test web push notifications across devices and browsers.
-- [ ] Identify and resolve remaining bugs and edge cases.
-- [ ] Improve error handling and application reliability.
-- [ ] Improve performance and database efficiency.
-- [ ] Refine the frontend and responsive layouts.
-- [ ] Improve task recommendations and planning accuracy.
-- [ ] Complete unfinished project management interfaces.
+- [ ] Validate Google integrations with real accounts. *(step-by-step guide in [docs/validation.md](docs/validation.md))*
+- [ ] Validate OpenAI integration with the real API. *(key and fallback verified; success path needs account credits)*
+- [ ] Test web push notifications across devices and browsers. *(device checklist in [docs/validation.md](docs/validation.md))*
+- [x] Identify and resolve remaining bugs and edge cases.
+- [x] Improve error handling and application reliability.
+- [x] Improve performance and database efficiency.
+- [x] Refine the frontend and responsive layouts.
+- [ ] Improve task recommendations and planning accuracy. *(suggestions are now actionable; planning accuracy still to be tuned with real usage)*
+- [x] Complete unfinished project management interfaces.
 
 ### Phase 3: Advanced AI Capabilities
 
@@ -525,7 +527,7 @@ This project is an ongoing learning and engineering effort, and I plan to contin
 
 **Developer:** Praneeth Bothumanchi
 
-**Current Stage:** Phase 1 – Web Application, Backend API, and Background Worker
+**Current Stage:** Phase 2 – Stability and Improvements
 
 **Project Status:** Actively Under Development
 

@@ -20,6 +20,7 @@
     "db:migrate:dev": "pnpm --filter @lifepilot/db migrate:dev",
     "db:seed": "pnpm --filter @lifepilot/api seed",
     "sounds": "node scripts/generate-sounds.mjs",
-    "audit": "pnpm audit --prod"
+    "audit": "pnpm audit --prod",
+    "smoke:openai": "pnpm --filter @lifepilot/api exec env DOTENV_CONFIG_PATH=../../.env DOTENV_CONFIG_QUIET=true tsx ../../packages/core/scripts/smoke-openai.ts"
   }
 }

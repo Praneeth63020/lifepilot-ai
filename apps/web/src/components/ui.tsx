@@ -1,6 +1,6 @@
 import clsx from "clsx";
-import { Loader2, X } from "lucide-react";
-import { useEffect, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { Loader2, MoreHorizontal, X } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import type { Priority } from "@lifepilot/shared";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
@@ -129,7 +129,9 @@ export function Field({ label, hint, error, children, htmlFor }: { label: string
 
 const inputCls = "h-10 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink placeholder:text-muted/70 focus:border-accent focus:outline-none";
 export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...rest} className={clsx(inputCls, className)} />;
+  // Like Select: a caller-provided width (w-auto, w-40, …) replaces the default full width.
+  const sized = /(^|\s)w-/.test(className ?? "");
+  return <input {...rest} className={clsx(inputCls.replace("w-full ", sized ? "" : "w-full "), className)} />;
 }
 export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   const sized = /(^|\s)w-/.test(className ?? "");
@@ -225,6 +227,111 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
         {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+    </div>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  icon?: ReactNode;
+  onSelect: () => void;
+  danger?: boolean;
+}
+
+/**
+ * Compact "more actions" dropdown. Keyboard: Enter/Space/ArrowDown opens, arrows move,
+ * Escape closes and returns focus to the trigger; clicking outside closes it.
+ */
+export function Menu({ label, items, className }: { label: string; items: MenuItem[]; className?: string }) {
+  const [open, setOpen] = useState(false);
+  // Open upwards when there isn't room below the trigger (e.g. the last rows on a phone).
+  const [up, setUp] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
+  const itemEls = () => [...(rootRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+
+  useEffect(() => {
+    if (!open) return;
+    itemEls()[0]?.focus();
+    const onDown = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const close = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+  const openMenu = () => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    const needed = items.length * 40 + 16;
+    setUp(Boolean(rect && window.innerHeight - rect.bottom < needed && rect.top > needed));
+    setOpen(true);
+  };
+  const onMenuKey = (e: ReactKeyboardEvent) => {
+    const els = itemEls();
+    const i = els.indexOf(document.activeElement as HTMLElement);
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      els[(i + 1) % els.length]?.focus();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      els[(i - 1 + els.length) % els.length]?.focus();
+    } else if (e.key === "Tab") {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div ref={rootRef} className={clsx("relative", className)}>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => (open ? setOpen(false) : openMenu())}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            openMenu();
+          }
+        }}
+        className={buttonClass({ variant: "ghost", size: "sm" })}
+      >
+        <MoreHorizontal className="size-4" aria-hidden />
+      </button>
+      {open && (
+        <div id={menuId} role="menu" aria-label={label} onKeyDown={onMenuKey} className={clsx("fade-in absolute right-0 z-30 min-w-48 rounded-xl border border-line bg-surface p-1 shadow-lg", up ? "bottom-full mb-1" : "top-full mt-1")}>
+          {items.map((it) => (
+            <button
+              key={it.label}
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              onClick={() => {
+                setOpen(false);
+                it.onSelect();
+              }}
+              className={clsx(
+                "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm focus:outline-none",
+                it.danger ? "text-danger hover:bg-danger/10 focus:bg-danger/10" : "text-ink hover:bg-surface-2 focus:bg-surface-2",
+              )}
+            >
+              {it.icon}
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

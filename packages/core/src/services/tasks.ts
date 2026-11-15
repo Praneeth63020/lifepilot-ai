@@ -199,8 +199,14 @@ export async function listTasks(
         : [sql`${tasks.dueAt} asc nulls last`, priorityOrder];
   const rows = await ctx.db.select().from(tasks).where(where).orderBy(...orderBy).limit(q.limit).offset(q.offset);
   const [{ count } = { count: 0 }] = await ctx.db.select({ count: sql<number>`count(*)::int` }).from(tasks).where(where);
-  const subs = rows.length
-    ? await ctx.db.query.subtasks.findMany({ where: inArray(subtasks.taskId, rows.map((r) => r.id)), orderBy: asc(subtasks.position) })
-    : [];
-  return { items: rows.map((r) => ({ ...r, subtasks: subs.filter((s) => s.taskId === r.id) })), total: count };
+  return { items: await attachSubtasks(ctx, rows), total: count };
+}
+
+/** Load subtasks for many tasks in one query (avoids one query per task). */
+export async function attachSubtasks(ctx: CoreContext, rows: TaskRow[]): Promise<TaskWithSubtasks[]> {
+  if (!rows.length) return [];
+  const subs = await ctx.db.query.subtasks.findMany({ where: inArray(subtasks.taskId, rows.map((r) => r.id)), orderBy: asc(subtasks.position) });
+  const byTask = new Map<string, SubtaskRow[]>();
+  for (const s of subs) byTask.set(s.taskId, [...(byTask.get(s.taskId) ?? []), s]);
+  return rows.map((r) => ({ ...r, subtasks: byTask.get(r.id) ?? [] }));
 }

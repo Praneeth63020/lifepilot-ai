@@ -99,7 +99,9 @@ export const taskListQuerySchema = z.object({
 
 export const subtaskCreateSchema = z.object({ title: z.string().trim().min(1).max(200) });
 export const subtaskUpdateSchema = z.object({ title: z.string().trim().min(1).max(200).optional(), done: z.boolean().optional() });
-export const projectCreateSchema = z.object({ name: z.string().trim().min(1).max(100), color: z.string().max(20).nullish() });
+const projectColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a hex colour like #4f46e5").nullish();
+export const projectCreateSchema = z.object({ name: z.string().trim().min(1).max(100), color: projectColor });
+export const projectUpdateSchema = z.object({ name: z.string().trim().min(1).max(100).optional(), color: projectColor });
 
 export const eventCreateSchema = z
   .object({

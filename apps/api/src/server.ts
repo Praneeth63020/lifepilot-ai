@@ -37,5 +37,7 @@ const shutdown = (signal: string) => {
   });
   setTimeout(() => process.exit(1), 10_000).unref();
 };
+// Last-resort logging: route handlers are covered by Express 5, but background promises are not.
+process.on("unhandledRejection", (err) => ctx.logger.error({ err }, "Unhandled promise rejection"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));

@@ -111,3 +111,33 @@ test("unauthenticated users are sent to sign in, and bad passwords are rejected"
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("alert")).toContainText("Incorrect email or password");
 });
+
+test("projects: create, assign a task, filter, and use the actions menu", async ({ page }) => {
+  await signUp(page);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Load demo data" }).click();
+  await expect(page).toHaveURL(/\/app$/);
+
+  await page.goto("/app/tasks");
+  await page.getByRole("button", { name: "Projects" }).click();
+  await page.fill("#p-name", "Job search");
+  await page.getByRole("dialog").getByRole("button", { name: "Add" }).click();
+  await expect(page.getByRole("dialog").getByLabel("Name of Job search")).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
+
+  await page.getByRole("button", { name: "Edit Prepare slides for design review" }).click();
+  await page.selectOption("#t-proj", { label: "Job search" });
+  await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+
+  // The filter chip shows the open-task count and narrows the list to that project.
+  await page.getByRole("button", { name: /Job search\s*1/ }).click();
+  await expect(page.getByText("Prepare slides for design review")).toBeVisible();
+  await expect(page.getByText("Weekly grocery order")).toHaveCount(0);
+
+  // Less common actions live in the per-task menu; Escape closes it.
+  await page.getByRole("button", { name: "More actions for Prepare slides for design review" }).click();
+  await expect(page.getByRole("menuitem", { name: "Remind me…" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+});

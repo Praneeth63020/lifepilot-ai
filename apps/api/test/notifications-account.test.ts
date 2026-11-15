@@ -103,10 +103,15 @@ describe("dashboard", () => {
     expect(d.date).toBe("2026-11-02");
     expect(d.topTasks.length).toBeGreaterThan(0);
     expect(d.importantEmails.length).toBeGreaterThan(0);
-    expect(d.recommendations.join(" ")).toMatch(/overdue/);
-    expect(d.recommendations.join(" ")).toMatch(/conflict/);
+    const kinds = d.recommendations.map((r: { kind: string }) => r.kind);
+    expect(kinds).toEqual(expect.arrayContaining(["overdue", "conflict", "not_planned"]));
+    expect(d.recommendations.find((r: { kind: string }) => r.kind === "overdue").text).toMatch(/overdue/);
     expect(d.connections.map((c: { provider: string }) => c.provider)).toEqual(["demo", "demo"]);
+    expect(d.dueToday[0].subtasks).toEqual([]);
     const week = (await agent.get("/api/v1/dashboard/week").expect(200)).body;
     expect(week.days).toHaveLength(7);
+    expect(week.days[0].date).toBe("2026-11-02");
+    expect(week.days[0].tasksDue.map((t: { title: string }) => t.title)).toContain("Ship release notes");
+    expect(week.days.slice(1).every((day: { tasksDue: unknown[] }) => day.tasksDue.every((t) => (t as { title: string }).title !== "Ship release notes"))).toBe(true);
   });
 });
