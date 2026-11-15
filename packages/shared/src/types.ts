@@ -85,6 +85,8 @@ export interface ProjectDTO {
   id: string;
   name: string;
   color: string | null;
+  /** Open tasks in this project. */
+  openTasks: number;
 }
 
 export interface CalendarEventDTO {
@@ -232,10 +234,16 @@ export interface DashboardDTO {
   deadlines: { taskId: string; title: string; dueAt: string; overdue: boolean }[];
   recentNotifications: NotificationDTO[];
   plan: DailyPlanDTO | null;
-  recommendations: string[];
+  recommendations: RecommendationDTO[];
   connections: ConnectionDTO[];
 }
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown };
+}
+
+/** A deterministic, explainable dashboard suggestion. `kind` lets the UI link to where it can be acted on. */
+export interface RecommendationDTO {
+  kind: "overdue" | "conflict" | "unclear_deadline" | "suspicious_email" | "no_estimate" | "not_planned";
+  text: string;
 }

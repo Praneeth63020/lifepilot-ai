@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { and, asc, desc, eq, gt, gte, isNotNull, lt } from "drizzle-orm";
 import { calendarEvents, notifications, tasks } from "@lifepilot/db";
-import { getCurrentPlan, getPrefs, getTask, type CoreContext } from "@lifepilot/core";
+import { attachSubtasks, getCurrentPlan, getPrefs, type CoreContext } from "@lifepilot/core";
 import {
   addLocalDays,
   detectConflicts,
@@ -9,6 +9,7 @@ import {
   localDate,
   localDayBounds,
   type DashboardDTO,
+  type RecommendationDTO,
 } from "@lifepilot/shared";
 import { uid } from "../auth.js";
 import { eventDTO, notificationDTO, planDTO, taskDTO } from "../serialize.js";
@@ -62,21 +63,21 @@ export function dashboardRoutes(ctx: CoreContext): Router {
     });
 
     // Deterministic, explainable recommendations (no AI needed for these).
-    const recs: string[] = [];
+    const recs: RecommendationDTO[] = [];
     const overdue = open.filter((t) => t.dueAt && t.dueAt < now);
-    if (overdue.length) recs.push(`${overdue.length} task${overdue.length > 1 ? "s are" : " is"} overdue — finish, reschedule, or drop ${overdue.length > 1 ? "them" : "it"}.`);
+    if (overdue.length) recs.push({ kind: "overdue", text: `${overdue.length} task${overdue.length > 1 ? "s are" : " is"} overdue — finish, reschedule, or drop ${overdue.length > 1 ? "them" : "it"}.` });
     const tomorrow = localDayBounds(addLocalDays(date, 1, tz), tz);
     const tmrEvents = await ctx.db.query.calendarEvents.findMany({
       where: and(eq(calendarEvents.userId, userId), lt(calendarEvents.startAt, tomorrow.end), gt(calendarEvents.endAt, start)),
     });
     const conflicts = detectConflicts(tmrEvents);
-    if (conflicts.length) recs.push(`${conflicts.length} calendar conflict${conflicts.length > 1 ? "s" : ""} today or tomorrow ("${conflicts[0]!.a.title}" overlaps "${conflicts[0]!.b.title}").`);
+    if (conflicts.length) recs.push({ kind: "conflict", text: `${conflicts.length} calendar conflict${conflicts.length > 1 ? "s" : ""} today or tomorrow ("${conflicts[0]!.a.title}" overlaps "${conflicts[0]!.b.title}").` });
     const unclear = emails.filter((e) => e.deadlineCertainty === "ambiguous").length;
-    if (unclear) recs.push(`${unclear} email${unclear > 1 ? "s mention" : " mentions"} a deadline without a clear date — confirm it before it slips.`);
-    if (emails.some((e) => e.suspicious)) recs.push("An email contains instructions aimed at an AI assistant. It was ignored — review it manually.");
+    if (unclear) recs.push({ kind: "unclear_deadline", text: `${unclear} email${unclear > 1 ? "s mention" : " mentions"} a deadline without a clear date — confirm it before it slips.` });
+    if (emails.some((e) => e.suspicious)) recs.push({ kind: "suspicious_email", text: "An email contains instructions aimed at an AI assistant. It was ignored — review it manually." });
     const noEstimate = open.filter((t) => t.estimateMin == null).length;
-    if (noEstimate) recs.push(`${noEstimate} open task${noEstimate > 1 ? "s have" : " has"} no time estimate, so plans assume 30 min.`);
-    if (!plan) recs.push("You haven't planned today yet.");
+    if (noEstimate) recs.push({ kind: "no_estimate", text: `${noEstimate} open task${noEstimate > 1 ? "s have" : " has"} no time estimate, so plans assume 30 min.` });
+    if (!plan) recs.push({ kind: "not_planned", text: "You haven't planned today yet." });
 
     const dto: DashboardDTO = {
       now: now.toISOString(),
@@ -84,7 +85,7 @@ export function dashboardRoutes(ctx: CoreContext): Router {
       timezone: tz,
       progress: { completedToday: completedToday.length, dueToday: dueToday.length, openTotal: open.length },
       topTasks,
-      dueToday: await Promise.all(dueToday.slice(0, 8).map(async (t) => taskDTO(await getTask(ctx, userId, t.id)))),
+      dueToday: (await attachSubtasks(ctx, dueToday.slice(0, 8))).map(taskDTO),
       upcomingEvents: events.map(eventDTO),
       importantEmails: emails,
       deadlines,
@@ -101,16 +102,23 @@ export function dashboardRoutes(ctx: CoreContext): Router {
     const prefs = await getPrefs(ctx, userId);
     const tz = prefs.timezone;
     const today = localDate(ctx.now(), tz);
+    const bounds = Array.from({ length: 7 }, (_, i) => {
+      const date = addLocalDays(today, i, tz);
+      return { date, ...localDayBounds(date, tz) };
+    });
+    const weekStart = bounds[0]!.start;
+    const weekEnd = bounds[6]!.end;
+    // Two queries for the whole week instead of two per day.
+    const allEvents = await ctx.db.query.calendarEvents.findMany({
+      where: and(eq(calendarEvents.userId, userId), lt(calendarEvents.startAt, weekEnd), gt(calendarEvents.endAt, weekStart)),
+    });
+    const allDue = await ctx.db.query.tasks.findMany({
+      where: and(eq(tasks.userId, userId), eq(tasks.status, "open"), gte(tasks.dueAt, weekStart), lt(tasks.dueAt, weekEnd)),
+    });
     const days = [];
-    for (let i = 0; i < 7; i++) {
-      const d = addLocalDays(today, i, tz);
-      const { start, end } = localDayBounds(d, tz);
-      const evs = await ctx.db.query.calendarEvents.findMany({
-        where: and(eq(calendarEvents.userId, userId), lt(calendarEvents.startAt, end), gt(calendarEvents.endAt, start)),
-      });
-      const due = await ctx.db.query.tasks.findMany({
-        where: and(eq(tasks.userId, userId), eq(tasks.status, "open"), gte(tasks.dueAt, start), lt(tasks.dueAt, end)),
-      });
+    for (const { date: d, start, end } of bounds) {
+      const evs = allEvents.filter((e) => e.startAt < end && e.endAt > start);
+      const due = allDue.filter((t) => t.dueAt! >= start && t.dueAt! < end);
       const busyMin = evs.filter((e) => !e.allDay).reduce((s, e) => s + Math.max(0, Math.min(e.endAt.getTime(), end.getTime()) - Math.max(e.startAt.getTime(), start.getTime())) / 60000, 0);
       days.push({ date: d, events: evs.length, busyMinutes: Math.round(busyMin), tasksDue: due.map((t) => ({ id: t.id, title: t.title, dueAt: t.dueAt!.toISOString(), priority: t.priority })), conflicts: detectConflicts(evs).length });
     }

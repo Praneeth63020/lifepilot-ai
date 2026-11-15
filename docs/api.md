@@ -51,8 +51,8 @@ These endpoints are rate limited to 20 requests per 15 minutes.
 | POST | `/tasks/:id/reopen` | |
 | POST | `/tasks/:id/subtasks` | `{title}` |
 | PATCH/DELETE | `/subtasks/:id` | `{title?, done?}` |
-| GET/POST | `/projects` | |
-| DELETE | `/projects/:id` | |
+| GET/POST | `/projects` | List includes `openTasks` per project. Colour is a hex value like `#4f46e5`. |
+| PATCH/DELETE | `/projects/:id` | Rename or recolour; deleting keeps the tasks and clears their project. |
 
 ## Calendar (`/calendar`)
 

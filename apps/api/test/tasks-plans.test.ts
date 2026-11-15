@@ -160,3 +160,30 @@ describe("calendar alternatives", () => {
     }
   });
 });
+
+describe("projects", () => {
+  it("creates, counts open tasks, renames, and deletes without losing tasks", async () => {
+    const { app } = makeCtx();
+    const { agent } = await signUp(app);
+    const other = await signUp(app);
+    const p = (await agent.post("/api/v1/projects").send({ name: "Thesis", color: "#4f46e5" }).expect(201)).body;
+    expect(p).toMatchObject({ name: "Thesis", color: "#4f46e5", openTasks: 0 });
+    await agent.post("/api/v1/projects").send({ name: "Bad colour", color: "blue" }).expect(400);
+
+    const t1 = (await agent.post("/api/v1/tasks").send({ title: "Write chapter 2", projectId: p.id }).expect(201)).body;
+    await agent.post("/api/v1/tasks").send({ title: "Fix figures", projectId: p.id }).expect(201);
+    await agent.post(`/api/v1/tasks/${t1.id}/complete`).expect(200);
+    expect((await agent.get("/api/v1/projects").expect(200)).body.items).toEqual([expect.objectContaining({ id: p.id, openTasks: 1 })]);
+    expect((await agent.get("/api/v1/tasks").query({ projectId: p.id }).expect(200)).body.items.map((t: { title: string }) => t.title)).toEqual(["Fix figures"]);
+
+    const renamed = (await agent.patch(`/api/v1/projects/${p.id}`).send({ name: "Thesis 2026" }).expect(200)).body;
+    expect(renamed).toMatchObject({ name: "Thesis 2026", color: "#4f46e5", openTasks: 1 });
+    await other.agent.patch(`/api/v1/projects/${p.id}`).send({ name: "mine now" }).expect(404);
+    await other.agent.post("/api/v1/tasks").send({ title: "x", projectId: p.id }).expect(404);
+
+    await agent.delete(`/api/v1/projects/${p.id}`).expect(204);
+    const tasks = (await agent.get("/api/v1/tasks").query({ status: "all" }).expect(200)).body.items;
+    expect(tasks).toHaveLength(2);
+    expect(tasks.every((t: { projectId: string | null }) => t.projectId === null)).toBe(true);
+  });
+});

@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { and, asc, eq, sql } from "drizzle-orm";
-import { projects, subtasks } from "@lifepilot/db";
+import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
+import { projects, subtasks, tasks } from "@lifepilot/db";
 import {
   completeTask,
   createTask,
@@ -14,11 +14,13 @@ import {
 } from "@lifepilot/core";
 import {
   projectCreateSchema,
+  projectUpdateSchema,
   subtaskCreateSchema,
   subtaskUpdateSchema,
   taskCreateSchema,
   taskListQuerySchema,
   taskUpdateSchema,
+  type ProjectDTO,
 } from "@lifepilot/shared";
 import { uid } from "../auth.js";
 import { idParam, parse } from "../http.js";
@@ -101,14 +103,38 @@ export function subtaskRoutes(ctx: CoreContext): Router {
 
 export function projectRoutes(ctx: CoreContext): Router {
   const r = Router();
+  const dto = (p: typeof projects.$inferSelect, openTasks: number): ProjectDTO => ({ id: p.id, name: p.name, color: p.color, openTasks });
+
   r.get("/", async (req, res) => {
-    const rows = await ctx.db.query.projects.findMany({ where: eq(projects.userId, uid(req)), orderBy: asc(projects.name) });
-    res.json({ items: rows.map((p) => ({ id: p.id, name: p.name, color: p.color })) });
+    const userId = uid(req);
+    const rows = await ctx.db.query.projects.findMany({ where: eq(projects.userId, userId), orderBy: asc(projects.name) });
+    const counts = await ctx.db
+      .select({ projectId: tasks.projectId, n: sql<number>`count(*)::int` })
+      .from(tasks)
+      .where(and(eq(tasks.userId, userId), eq(tasks.status, "open"), isNotNull(tasks.projectId)))
+      .groupBy(tasks.projectId);
+    const byProject = new Map(counts.map((c) => [c.projectId, c.n]));
+    res.json({ items: rows.map((p) => dto(p, byProject.get(p.id) ?? 0)) });
   });
   r.post("/", async (req, res) => {
     const input = parse(projectCreateSchema, req.body);
     const [p] = await ctx.db.insert(projects).values({ userId: uid(req), name: input.name, color: input.color ?? null }).returning();
-    res.status(201).json({ id: p!.id, name: p!.name, color: p!.color });
+    res.status(201).json(dto(p!, 0));
+  });
+  r.patch("/:id", async (req, res) => {
+    const userId = uid(req);
+    const input = parse(projectUpdateSchema, req.body);
+    const [p] = await ctx.db
+      .update(projects)
+      .set({ ...(input.name !== undefined ? { name: input.name } : {}), ...(input.color !== undefined ? { color: input.color ?? null } : {}) })
+      .where(and(eq(projects.id, idParam(req)), eq(projects.userId, userId)))
+      .returning();
+    if (!p) throw notFound("Project");
+    const [{ n } = { n: 0 }] = await ctx.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(tasks)
+      .where(and(eq(tasks.userId, userId), eq(tasks.status, "open"), eq(tasks.projectId, p.id)));
+    res.json(dto(p, n));
   });
   r.delete("/:id", async (req, res) => {
     const userId = uid(req);
