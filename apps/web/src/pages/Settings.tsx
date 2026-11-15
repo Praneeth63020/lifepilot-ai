@@ -89,7 +89,7 @@ function GeneralTab() {
       </Card>
       <Card title="Planner">
         <div className="flex flex-col gap-3">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-3">
             <Field label="Focus block" htmlFor="g-fb"><Select id="g-fb" value={p.focusBlockMin} onChange={(e) => set("focusBlockMin", Number(e.target.value))}>{[25, 45, 60, 90, 120].map((m) => <option key={m} value={m}>{m} min</option>)}</Select></Field>
             <Field label="Break" htmlFor="g-br"><Select id="g-br" value={p.breakMin} onChange={(e) => set("breakMin", Number(e.target.value))}>{[0, 5, 10, 15, 20].map((m) => <option key={m} value={m}>{m} min</option>)}</Select></Field>
             <Field label="Buffer after events" htmlFor="g-bu"><Select id="g-bu" value={p.bufferMin} onChange={(e) => set("bufferMin", Number(e.target.value))}>{[0, 5, 10, 15, 30].map((m) => <option key={m} value={m}>{m} min</option>)}</Select></Field>
@@ -366,8 +366,16 @@ function SecurityTab() {
   const toast = useToast();
   const qc = useQueryClient();
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: () => api.get<{ items: { id: string; current: boolean; userAgent: string | null; createdAt: string; lastSeenAt: string }[] }>("/auth/sessions") });
-  const revoke = useMutation({ mutationFn: () => api.post("/auth/sessions/revoke-others"), onSuccess: () => { qc.invalidateQueries({ queryKey: ["sessions"] }); toast({ title: "Signed out other devices", tone: "success" }); } });
-  const resend = useMutation({ mutationFn: () => api.post("/auth/resend-verification"), onSuccess: () => toast({ title: "Verification email sent", tone: "success" }) });
+  const revoke = useMutation({
+    mutationFn: () => api.post("/auth/sessions/revoke-others"),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["sessions"] }); toast({ title: "Signed out other devices", tone: "success" }); },
+    onError: (e) => toast({ title: "Couldn't sign out other devices", body: errorMessage(e), tone: "error" }),
+  });
+  const resend = useMutation({
+    mutationFn: () => api.post("/auth/resend-verification"),
+    onSuccess: () => toast({ title: "Verification email sent", tone: "success" }),
+    onError: (e) => toast({ title: "Couldn't send the email", body: errorMessage(e), tone: "error" }),
+  });
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       <Card title="Email">

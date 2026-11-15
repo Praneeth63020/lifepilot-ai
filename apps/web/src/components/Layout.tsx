@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bell, CalendarDays, CheckSquare, Compass, Inbox, LayoutDashboard, LogOut, Menu, Settings, X } from "lucide-react";
+import { Bell, CalendarDays, CheckSquare, Compass, FolderKanban, Inbox, LayoutDashboard, LogOut, Menu, Settings, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import type { NotificationDTO } from "@lifepilot/shared";
@@ -15,6 +15,7 @@ const NAV = [
   { to: "/app", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/app/planner", label: "Planner", icon: Compass },
   { to: "/app/tasks", label: "Tasks", icon: CheckSquare },
+  { to: "/app/projects", label: "Projects", icon: FolderKanban },
   { to: "/app/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/app/inbox", label: "Smart inbox", icon: Inbox },
   { to: "/app/notifications", label: "Notifications", icon: Bell },

@@ -1,4 +1,4 @@
-import { ConfigError, createCoreContext, loadConfig, reconcileScheduledReminders } from "@lifepilot/core";
+import { ConfigError, createCoreContext, failInterruptedSyncJobs, loadConfig, reconcileScheduledReminders } from "@lifepilot/core";
 import { createRedis } from "@lifepilot/jobs";
 import { startWorkers } from "./workers.js";
 
@@ -23,10 +23,20 @@ reconcileScheduledReminders(ctx)
   .then((n) => ctx.logger.info({ reconciled: n }, "LifePilot worker started"))
   .catch((err) => ctx.logger.error({ err }, "Reminder reconciliation failed"));
 
+// Sync jobs left "running" by a crash would otherwise show as running forever in Settings.
+const sweepInterruptedSyncs = () =>
+  failInterruptedSyncJobs(ctx)
+    .then((n) => n && ctx.logger.warn({ count: n }, "Marked interrupted sync jobs as failed"))
+    .catch((err) => ctx.logger.error({ err }, "Interrupted-sync sweep failed"));
+void sweepInterruptedSyncs();
+const sweepTimer = setInterval(sweepInterruptedSyncs, 10 * 60_000);
+sweepTimer.unref();
+
 let shuttingDown = false;
 const shutdown = async (signal: string) => {
   if (shuttingDown) return;
   shuttingDown = true;
+  clearInterval(sweepTimer);
   ctx.logger.info({ signal }, "Worker shutting down (finishing active jobs)");
   // Don't outlive the orchestrator's stop grace period; unfinished jobs are retried by BullMQ.
   setTimeout(() => process.exit(1), 25_000).unref();

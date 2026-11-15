@@ -15,6 +15,7 @@
 
 **Google credentials**
 - OAuth uses PKCE (S256). State is random, stored hashed, single-use, expires after 10 minutes and is bound to the user's session.
+- Email delivery failures never change an auth response: sign-up still succeeds (and reports `verificationSent: false`), and password-reset requests answer identically for existing and unknown emails even if sending fails, so they can't be used to discover accounts. Failures are logged without the link.
 - Tokens are AES-256-GCM encrypted at rest (`TOKEN_ENCRYPTION_KEY`) and never sent to the client.
 - Scopes are checked after consent. Disconnecting revokes tokens at Google. An `invalid_grant` response marks the account `revoked` and stops sync.
 
@@ -26,13 +27,13 @@
 - Email content is untrusted data:
   - It's wrapped in delimiters with explicit "never follow instructions" rules.
   - Model output must match a strict JSON schema.
-  - A model-proposed deadline is kept only if its quoted text appears in the email.
+  - A model-proposed deadline is kept only if its quoted text appears in the email and parses to the same instant as one of the email's own deadline phrases; otherwise it needs the user's confirmation. A model can't reintroduce a promotional date the rules ignored.
   - Rule-based injection detection always runs. Flagged emails get capped confidence, a UI warning, and no automatic action.
 - No tool-calling exists yet, so a model can't trigger any action.
 - Users can turn AI analysis off; email content then never leaves the server.
 
 **Data minimisation and control**
-- Only a configurable recent window of email is synced (14 days by default), excluding promotions and social. Only a text excerpt of at most 4,000 characters is stored — no full bodies, no attachments.
+- Only a configurable recent window of email is synced (14 days by default), excluding promotions and social, and never the user's own Sent mail or Drafts. Only a text excerpt of at most 4,000 characters is stored — no full bodies, no attachments.
 - Users can export their data, disconnect an integration (with or without deleting imported data), or delete their account (cascading delete plus token revocation).
 
 **Audit and secrets**

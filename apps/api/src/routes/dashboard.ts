@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { and, asc, desc, eq, gt, gte, isNotNull, lt } from "drizzle-orm";
 import { calendarEvents, notifications, tasks } from "@lifepilot/db";
-import { attachSubtasks, getCurrentPlan, getPrefs, type CoreContext } from "@lifepilot/core";
+import { attachSubtasks, getCurrentPlan, getPrefs, planDrift, type CoreContext } from "@lifepilot/core";
 import {
   addLocalDays,
   detectConflicts,
@@ -45,7 +45,16 @@ export function dashboardRoutes(ctx: CoreContext): Router {
           now,
           tasks: open,
           events: [],
-          prefs: { timezone: tz, workStartMin: prefs.workStartMin, workEndMin: prefs.workEndMin, focusBlockMin: prefs.focusBlockMin, breakMin: prefs.breakMin, bufferMin: prefs.bufferMin },
+          prefs: {
+            timezone: tz,
+            workStartMin: prefs.workStartMin,
+            workEndMin: prefs.workEndMin,
+            focusBlockMin: prefs.focusBlockMin,
+            breakMin: prefs.breakMin,
+            bufferMin: prefs.bufferMin,
+            sleepStartMin: prefs.sleepStartMin,
+            sleepEndMin: prefs.sleepEndMin,
+          },
         }).topTasks;
     const emails = (await loadInsights(ctx, userId, { status: "new", limit: 20 }))
       .filter((i) => i.category !== "low_priority" && (i.importanceScore >= 40 || i.suspicious))
@@ -78,6 +87,8 @@ export function dashboardRoutes(ctx: CoreContext): Router {
     const noEstimate = open.filter((t) => t.estimateMin == null).length;
     if (noEstimate) recs.push({ kind: "no_estimate", text: `${noEstimate} open task${noEstimate > 1 ? "s have" : " has"} no time estimate, so plans assume 30 min.` });
     if (!plan) recs.push({ kind: "not_planned", text: "You haven't planned today yet." });
+    const drift = plan ? await planDrift(ctx, userId, plan) : [];
+    if (drift.length) recs.unshift({ kind: "plan_outdated", text: `Today's plan is out of date: ${drift[0]} Replan from now to fit it in.` });
 
     const dto: DashboardDTO = {
       now: now.toISOString(),
@@ -90,7 +101,7 @@ export function dashboardRoutes(ctx: CoreContext): Router {
       importantEmails: emails,
       deadlines,
       recentNotifications: recent.map(notificationDTO),
-      plan: plan ? planDTO(plan) : null,
+      plan: plan ? planDTO(plan, drift) : null,
       recommendations: recs,
       connections: await listConnections(ctx, userId),
     };

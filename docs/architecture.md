@@ -41,18 +41,23 @@
 
 **Reminder fires** → `processReminderJob`: stale/cancelled/completed → skip. If now is in quiet hours (preferences may have changed) → defer. Otherwise insert notification rows per enabled channel (unique keys), send web push, record the outcome, and mark the reminder `fired`. Final failure after retries → a visible `delivery_failed` notification.
 
-**Gmail sync** → First run: messages from the last N days, excluding promotions/social, read *and* unread. After that: `users.history` since the stored `historyId`, falling back to a full window on 404. Only new IDs are fetched. A truncated text excerpt (≤4,000 chars) is stored, then the anticipation engine (`core/services/insights.ts`) creates one insight per email.
+**Gmail sync** → First run: messages from the last N days, excluding promotions/social, read *and* unread. The user's own Sent mail and Drafts are excluded (in the query, the history filter, and again after download). After that: `users.history` since the stored `historyId`, falling back to a full window on 404. Only new IDs are fetched. A truncated text excerpt (≤4,000 chars) is stored, then the anticipation engine (`core/services/insights.ts`) creates one insight per email.
 
-**Calendar sync** → Windowed resync (now−1d … now+N days, `singleEvents=true` so recurring instances are expanded). It upserts, preserves user fields (`needsPrep`, `prepMin`), and deletes events that vanished from the window. `syncToken` isn't used because Google doesn't allow it together with a time window.
+**Google tokens during sync** → A cached access token is used until a minute before expiry. If Google rejects it early (401), the token is refreshed once and the step retried; a second rejection marks the account `revoked` so the user is asked to reconnect. 429/5xx responses are retried with backoff (honouring `Retry-After`). Every step is idempotent, so retries never duplicate emails, events or notifications. Sync jobs left `running` by a crashed worker are marked failed after 15 minutes by a worker sweep.
+
+**Calendar sync** → Windowed resync (now−1d … now+N days, `singleEvents=true` so recurring instances are expanded). It upserts, preserves user fields (`needsPrep`, `prepMin`), and deletes events that vanished from the window — unless the fetch hit its 2,500-event limit, in which case nothing is deleted (absence then doesn't prove deletion). `syncToken` isn't used because Google doesn't allow it together with a time window.
 
 **Planner** → `generateDailyPlan` (pure):
 1. Events are facts; all-day events don't block time.
-2. Busy time = events plus a buffer after each.
+2. Busy time = events plus a buffer after each, plus sleep hours if working hours overlap them (with a warning).
 3. Prep blocks are added where there's free time.
 4. Free slots = working hours (from now, if today) minus busy time.
-5. Tasks are scored by priority and deadline proximity, with dependencies ordered first, and placed greedily in chunks up to the focus-block length, with breaks.
+5. Tasks are scored by priority and deadline proximity; the top three by score are the day's priorities. Placement order is different: work due later today first, earliest deadline first (the order that meets the most deadlines), then overdue work, then the rest by score — dependencies always first. Tasks are placed greedily in chunks up to the focus-block length, with breaks.
 6. Leftovers go to "needs time soon" or "can wait"; overload produces a warning.
 7. Replanning diffs against the previous plan.
+8. When a saved plan is read, `planDrift` reports anything that no longer fits (a meeting now overlapping planned work, a task due today that isn't in the plan). The plan is never changed automatically; the dashboard and planner suggest replanning.
+
+**Deadline extraction** (`shared/src/extraction.ts`) → Every "trigger + date" phrase is collected ("due Nov 6", "by Friday 5 PM", "extended to Nov 14"); dates without a trigger are mentions, not deadlines. A change ("extended/moved to …", "new deadline …") wins; otherwise the earliest deadline is used and other deadline phrases are shown to the user. An explicit timezone after a time ("5 PM EST") is honoured. Vague timing and d/m-vs-m/d dates are marked ambiguous and need the user's confirmation. Dates in clear promotions ("sale ends Nov 30") are ignored unless the email asks you to act, involves a bill, or is from an important sender.
 
 ## Data model
 

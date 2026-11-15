@@ -47,6 +47,9 @@ export interface PlanPrefs {
   breakMin: number;
   bufferMin: number;
   locale?: string;
+  /** Sleep window (minutes after local midnight; may cross midnight). Never scheduled. */
+  sleepStartMin?: number;
+  sleepEndMin?: number;
 }
 
 export type PlanItemKind = "task" | "event" | "prep" | "break";
@@ -211,6 +214,22 @@ export function generateDailyPlan(input: {
     }
   }
 
+  // 2b. Sleep hours are never scheduled, even if working hours overlap them.
+  if (prefs.sleepStartMin != null && prefs.sleepEndMin != null && prefs.sleepStartMin !== prefs.sleepEndMin) {
+    const sleep: Interval[] =
+      prefs.sleepStartMin > prefs.sleepEndMin
+        ? [
+            { start: day.start, end: atLocalMinute(date, prefs.sleepEndMin, tz) },
+            { start: atLocalMinute(date, prefs.sleepStartMin, tz), end: day.end },
+          ]
+        : [{ start: atLocalMinute(date, prefs.sleepStartMin, tz), end: atLocalMinute(date, prefs.sleepEndMin, tz) }];
+    const overlapping = sleep.filter((iv) => iv.start < workEnd && iv.end > workStart);
+    if (overlapping.length) {
+      busy.push(...overlapping);
+      warnings.push(`Your working hours overlap your sleep hours (${formatLocalTime(atLocalMinute(date, prefs.sleepStartMin, tz), tz, prefs.locale)}–${formatLocalTime(atLocalMinute(date, prefs.sleepEndMin, tz), tz, prefs.locale)}); nothing was scheduled while you sleep.`);
+    }
+  }
+
   // 3. Free slots within working hours.
   const slots: Slot[] =
     isPast || windowStart >= workEnd
@@ -239,8 +258,14 @@ export function generateDailyPlan(input: {
   let requiredTodayMinutes = 0;
   let assumedEstimates = 0;
 
-  // Processing order: score order, but a prerequisite is always processed before its dependent.
+  // Processing order (a prerequisite is always processed before its dependent):
+  //  1. work due later today, earliest deadline first — the order that meets the most deadlines;
+  //  2. overdue work (already late, so placing it after doesn't add new misses), by score;
+  //  3. everything else by score.
+  // topTasks above stays in pure score order: that is "what matters most", this is "what fits when".
   const byId = new Map(scored.map((s) => [s.task.id, s]));
+  const dueToday = scored.filter((s) => s.dueBucket === "today").sort((a, b) => a.task.dueAt!.getTime() - b.task.dueAt!.getTime() || compareScored(a, b));
+  const scheduleOrder = [...dueToday, ...scored.filter((s) => s.dueBucket !== "today")];
   const order: Scored[] = [];
   const visiting = new Set<string>();
   const visited = new Set<string>();
@@ -253,7 +278,7 @@ export function generateDailyPlan(input: {
     visited.add(s.task.id);
     order.push(s);
   };
-  scored.forEach(visit);
+  scheduleOrder.forEach(visit);
 
   for (const s of order) {
     const t = s.task;

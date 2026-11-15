@@ -87,6 +87,13 @@ export interface ProjectDTO {
   color: string | null;
   /** Open tasks in this project. */
   openTasks: number;
+  doneTasks: number;
+  /** Open tasks whose due time has passed. */
+  overdueTasks: number;
+  /** The earliest upcoming open deadline. */
+  nextDue: { taskId: string; title: string; dueAt: string } | null;
+  /** The latest due date among open tasks: when the remaining work is due to be finished. */
+  lastDueAt: string | null;
 }
 
 export interface CalendarEventDTO {
@@ -177,6 +184,8 @@ export interface DailyPlanDTO {
   warnings: string[];
   stats: { freeMinutes: number; scheduledTaskMinutes: number; requiredTodayMinutes: number };
   changes?: { taskId: string; title: string; change: "added" | "moved" | "removed"; from?: string; to?: string }[];
+  /** Why this saved plan no longer matches the calendar/tasks (computed when read). Empty if it still fits. */
+  drift: string[];
 }
 
 export interface ReminderDTO {
@@ -244,6 +253,6 @@ export interface ApiErrorBody {
 
 /** A deterministic, explainable dashboard suggestion. `kind` lets the UI link to where it can be acted on. */
 export interface RecommendationDTO {
-  kind: "overdue" | "conflict" | "unclear_deadline" | "suspicious_email" | "no_estimate" | "not_planned";
+  kind: "overdue" | "conflict" | "unclear_deadline" | "suspicious_email" | "no_estimate" | "not_planned" | "plan_outdated";
   text: string;
 }

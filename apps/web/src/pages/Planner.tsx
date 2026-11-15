@@ -78,6 +78,22 @@ export function PlannerPage() {
         </Card>
       )}
 
+      {plan && (plan.drift?.length ?? 0) > 0 && (
+        <div role="status" className="mb-4 flex flex-col gap-3 rounded-xl border border-warn/40 bg-warn/10 p-4 text-sm sm:flex-row sm:items-start">
+          <AlertTriangle className="size-5 shrink-0 text-warn" aria-hidden />
+          <div className="flex-1">
+            <p className="font-medium">This plan is out of date</p>
+            <ul className="mt-1 list-disc pl-5 text-muted">
+              {plan.drift.map((d) => <li key={d}>{d}</li>)}
+            </ul>
+            <p className="mt-1 text-muted">Nothing was changed. {date === today ? "Replan from now to get a revised proposal; your current plan stays until you accept it." : "Regenerate to get a revised proposal."}</p>
+          </div>
+          <Button className="shrink-0" onClick={() => (date === today ? replan.mutate() : generate.mutate())} loading={replan.isPending || generate.isPending}>
+            <RefreshCw className="size-4" /> {date === today ? "Replan from now" : "Regenerate"}
+          </Button>
+        </div>
+      )}
+
       {plan && (
         <div className="grid gap-5 lg:grid-cols-3">
           <div className="flex flex-col gap-5 lg:col-span-2">

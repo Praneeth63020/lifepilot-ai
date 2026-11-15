@@ -143,6 +143,50 @@ describe("daily planner API", () => {
   });
 });
 
+describe("project progress and deadlines", () => {
+  it("reports done/open/overdue counts, the next deadline and the last due date", async () => {
+    const { app } = makeCtx(); // now = 2026-11-02 09:00 IST
+    const { agent } = await signUp(app);
+    const p = (await agent.post("/api/v1/projects").send({ name: "Move house" }).expect(201)).body;
+    expect(p).toMatchObject({ openTasks: 0, doneTasks: 0, overdueTasks: 0, nextDue: null, lastDueAt: null });
+    const add = (title: string, dueAt?: string) => agent.post("/api/v1/tasks").send({ title, projectId: p.id, ...(dueAt ? { dueAt: IST(dueAt) } : {}) }).expect(201).then((r) => r.body);
+    await add("Book movers", "2026-11-01T18:00:00"); // overdue
+    await add("Pack kitchen", "2026-11-05T18:00:00");
+    await add("Hand over keys", "2026-11-20T10:00:00");
+    const done = await add("Give notice");
+    await agent.post(`/api/v1/tasks/${done.id}/complete`).expect(200);
+
+    const got = (await agent.get(`/api/v1/projects/${p.id}`).expect(200)).body;
+    expect(got).toMatchObject({ openTasks: 3, doneTasks: 1, overdueTasks: 1, lastDueAt: IST("2026-11-20T10:00:00") });
+    expect(got.nextDue).toMatchObject({ title: "Pack kitchen", dueAt: IST("2026-11-05T18:00:00") });
+    expect((await agent.get("/api/v1/projects").expect(200)).body.items[0]).toEqual(got);
+  });
+});
+
+describe("outdated plans", () => {
+  it("flags an accepted plan when a new meeting lands on planned work or new work is due today, without changing it", async () => {
+    const { app } = makeCtx(); // now = 2026-11-02 09:00 IST
+    const { agent } = await signUp(app);
+    await agent.post("/api/v1/tasks").send({ title: "Write spec", estimateMin: 60, priority: "high", dueAt: IST("2026-11-02T17:00:00") }).expect(201);
+    const plan = (await agent.post("/api/v1/plans/generate").send({}).expect(201)).body.plan;
+    await agent.post(`/api/v1/plans/${plan.id}/accept`).expect(200);
+    expect((await agent.get("/api/v1/plans/current").expect(200)).body.plan.drift).toEqual([]);
+
+    const block = plan.items.find((i: { kind: string }) => i.kind === "task");
+    await agent.post("/api/v1/calendar/events").send({ title: "Urgent client call", startAt: block.startAt, endAt: block.endAt }).expect(201);
+    await agent.post("/api/v1/tasks").send({ title: "Send invoice", estimateMin: 15, dueAt: IST("2026-11-02T16:00:00") }).expect(201);
+
+    const current = (await agent.get("/api/v1/plans/current").expect(200)).body.plan;
+    expect(current.id).toBe(plan.id);
+    expect(current.status).toBe("accepted");
+    expect(current.items).toEqual(plan.items.map((i: object) => expect.objectContaining(i))); // untouched
+    expect(current.drift.join(" ")).toMatch(/"Urgent client call" \(.*\) now overlaps planned "Write spec"/);
+    expect(current.drift.join(" ")).toMatch(/"Send invoice" is due today but not in this plan/);
+    const recs = (await agent.get("/api/v1/dashboard").expect(200)).body.recommendations;
+    expect(recs[0].kind).toBe("plan_outdated");
+  });
+});
+
 describe("calendar alternatives", () => {
   it("avoids other events on the target's day even when it is more than a few days away", async () => {
     const { app } = makeCtx(); // now = 2026-11-02 09:00 IST
@@ -180,6 +224,12 @@ describe("projects", () => {
     expect(renamed).toMatchObject({ name: "Thesis 2026", color: "#4f46e5", openTasks: 1 });
     await other.agent.patch(`/api/v1/projects/${p.id}`).send({ name: "mine now" }).expect(404);
     await other.agent.post("/api/v1/tasks").send({ title: "x", projectId: p.id }).expect(404);
+
+    // Duplicate names (any case) are refused on create and rename.
+    expect((await agent.post("/api/v1/projects").send({ name: "THESIS 2026" }).expect(409)).body.error.code).toBe("project_exists");
+    const other2 = (await agent.post("/api/v1/projects").send({ name: "Side project" }).expect(201)).body;
+    await agent.patch(`/api/v1/projects/${other2.id}`).send({ name: "thesis 2026" }).expect(409);
+    await other.agent.get(`/api/v1/projects/${p.id}`).expect(404);
 
     await agent.delete(`/api/v1/projects/${p.id}`).expect(204);
     const tasks = (await agent.get("/api/v1/tasks").query({ status: "all" }).expect(200)).body.items;

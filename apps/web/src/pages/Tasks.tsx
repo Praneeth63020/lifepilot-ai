@@ -2,23 +2,15 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import clsx from "clsx";
 import { AlarmClock, BellPlus, CalendarClock, CheckCircle2, ChevronDown, Circle, FolderKanban, ListChecks, ListPlus, Mail, Pencil, Plus, Repeat, Search, Timer, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import type { ProjectDTO, TaskDTO } from "@lifepilot/shared";
+import { Link, useSearchParams } from "react-router-dom";
+import type { TaskDTO } from "@lifepilot/shared";
 import { api, errorMessage } from "../api";
 import { TaskFormModal } from "../components/TaskForm";
 import { useToast } from "../components/toast";
-import { Badge, Button, Card, Empty, ErrorNote, Field, Input, Menu, Modal, PageHeader, PriorityBadge, Select, Spinner, type MenuItem } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorNote, Field, Input, Menu, Modal, PageHeader, PriorityBadge, Select, Spinner, buttonClass, type MenuItem } from "../components/ui";
 import { addDaysISO, fmtDateTime, localISODate, minutesLabel, zonedToISO } from "../lib/format";
 import { useTz } from "../session";
-
-export const PROJECT_COLORS = ["#4f46e5", "#0891b2", "#059669", "#d97706", "#dc2626", "#db2777", "#7c3aed", "#475569"];
-
-export function ProjectDot({ color, className }: { color: string | null; className?: string }) {
-  return <span aria-hidden className={clsx("inline-block size-2 shrink-0 rounded-full", className)} style={{ background: color ?? "var(--lp-muted)" }} />;
-}
-
-export function useProjects() {
-  return useQuery({ queryKey: ["projects"], queryFn: () => api.get<{ items: ProjectDTO[] }>("/projects"), staleTime: 30_000 });
-}
+import { ProjectDeadlines, ProjectDot, ProjectFormModal, ProjectProgress, useProjects } from "./Projects";
 
 export function TasksPage() {
   const tz = useTz();
@@ -27,12 +19,15 @@ export function TasksPage() {
   const [status, setStatus] = useState<"open" | "done" | "all">("open");
   const [search, setSearch] = useState("");
   const [priority, setPriority] = useState("");
-  const [projectId, setProjectId] = useState("");
+  // The project filter lives in the URL (?project=…) so project pages can link straight to it.
+  const [params, setParams] = useSearchParams();
+  const projectId = params.get("project") ?? "";
+  const setProjectId = (id: string) => setParams(id ? { project: id } : {}, { replace: true });
   const [sort, setSort] = useState<"due" | "priority" | "created">("due");
   const [editing, setEditing] = useState<TaskDTO | null | "new">(null);
   const [reminderFor, setReminderFor] = useState<TaskDTO | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [managingProjects, setManagingProjects] = useState(false);
+  const [editingProject, setEditingProject] = useState(false);
 
   const projects = useProjects();
   const projectById = new Map((projects.data?.items ?? []).map((p) => [p.id, p]));
@@ -57,8 +52,16 @@ export function TasksPage() {
     onSuccess: done("Hidden from today's plan"),
     onError: fail("Couldn't postpone"),
   });
-  const subToggle = useMutation({ mutationFn: (s: { id: string; done: boolean }) => api.patch(`/subtasks/${s.id}`, { done: !s.done }), onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }) });
-  const subAdd = useMutation({ mutationFn: (v: { id: string; title: string }) => api.post(`/tasks/${v.id}/subtasks`, { title: v.title }), onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }) });
+  const subToggle = useMutation({
+    mutationFn: (s: { id: string; done: boolean }) => api.patch(`/subtasks/${s.id}`, { done: !s.done }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
+    onError: fail("Couldn't update subtask"),
+  });
+  const subAdd = useMutation({
+    mutationFn: (v: { id: string; title: string }) => api.post(`/tasks/${v.id}/subtasks`, { title: v.title }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
+    onError: fail("Couldn't add subtask"),
+  });
 
   const filtered = Boolean(search || priority || projectId);
   const activeProject = projectId ? projectById.get(projectId) : undefined;
@@ -70,11 +73,27 @@ export function TasksPage() {
         subtitle="Everything you need to do, in one list. Due times drive reminders and your daily plan."
         actions={
           <>
-            <Button onClick={() => setManagingProjects(true)}><FolderKanban className="size-4" /> Projects</Button>
+            <Link to="/app/projects" className={buttonClass()}><FolderKanban className="size-4" /> Projects</Link>
             <Button variant="primary" onClick={() => setEditing("new")}><Plus className="size-4" /> New task</Button>
           </>
         }
       />
+
+      {activeProject && (
+        <Card className="mb-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <ProjectDot color={activeProject.color} className="size-2.5" />
+                <h2 className="min-w-0 break-words font-semibold">{activeProject.name}</h2>
+                <Button size="sm" variant="ghost" aria-label={`Edit project ${activeProject.name}`} onClick={() => setEditingProject(true)}><Pencil className="size-4" /></Button>
+              </div>
+              <div className="mt-3 max-w-md"><ProjectProgress project={activeProject} /></div>
+            </div>
+            <div className="sm:w-72"><ProjectDeadlines project={activeProject} tz={tz} /></div>
+          </div>
+        </Card>
+      )}
 
       {(projects.data?.items.length ?? 0) > 0 && (
         <div role="group" aria-label="Filter by project" className="-mx-1 mb-3 flex gap-1.5 overflow-x-auto px-1 pb-1">
@@ -226,7 +245,7 @@ export function TasksPage() {
 
       {editing && <TaskFormModal key={editing === "new" ? "new" : editing.id} open onClose={() => setEditing(null)} task={editing === "new" ? null : editing} defaultProjectId={projectId || null} />}
       {reminderFor && <ReminderModal task={reminderFor} tz={tz} onClose={() => setReminderFor(null)} />}
-      {managingProjects && <ProjectsModal onClose={() => setManagingProjects(false)} onDeleted={(id) => id === projectId && setProjectId("")} />}
+      {editingProject && activeProject && <ProjectFormModal project={activeProject} onClose={() => setEditingProject(false)} />}
     </div>
   );
 }
@@ -244,115 +263,6 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
     >
       {children}
     </button>
-  );
-}
-
-function ProjectsModal({ onClose, onDeleted }: { onClose: () => void; onDeleted: (id: string) => void }) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const projects = useProjects();
-  const [name, setName] = useState("");
-  const [color, setColor] = useState(PROJECT_COLORS[0]!);
-  const refresh = () => qc.invalidateQueries();
-  const fail = (title: string) => (e: unknown) => toast({ title, body: errorMessage(e), tone: "error" });
-  const create = useMutation({
-    mutationFn: () => api.post<ProjectDTO>("/projects", { name: name.trim(), color }),
-    onSuccess: () => {
-      setName("");
-      setColor(PROJECT_COLORS[((projects.data?.items.length ?? 0) + 1) % PROJECT_COLORS.length]!);
-      refresh();
-    },
-    onError: fail("Couldn't create project"),
-  });
-  const update = useMutation({
-    mutationFn: (v: { id: string; name?: string; color?: string }) => api.patch<ProjectDTO>(`/projects/${v.id}`, { name: v.name, color: v.color }),
-    onSuccess: refresh,
-    onError: fail("Couldn't update project"),
-  });
-  const remove = useMutation({
-    mutationFn: (id: string) => api.del(`/projects/${id}`),
-    onSuccess: (_r, id) => {
-      onDeleted(id);
-      refresh();
-      toast({ title: "Project deleted", body: "Its tasks were kept without a project.", tone: "success" });
-    },
-    onError: fail("Couldn't delete project"),
-  });
-
-  return (
-    <Modal open onClose={onClose} title="Projects" footer={<Button onClick={onClose}>Done</Button>}>
-      <form
-        className="flex flex-col gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (name.trim()) create.mutate();
-        }}
-      >
-        <Field label="New project" htmlFor="p-name">
-          <div className="flex gap-2">
-            <Input id="p-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Thesis, Home, Job search" maxLength={100} />
-            <Button type="submit" variant="primary" loading={create.isPending} disabled={!name.trim()}>Add</Button>
-          </div>
-        </Field>
-        <ColorPicker value={color} onChange={setColor} label="Colour for the new project" />
-      </form>
-
-      <div className="mt-5">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Your projects</p>
-        {projects.isLoading && <Spinner label="Loading projects" />}
-        {projects.data?.items.length === 0 && <p className="text-sm text-muted">No projects yet. Group related tasks, then filter by project on the Tasks page.</p>}
-        <ul className="flex flex-col divide-y divide-line">
-          {projects.data?.items.map((p) => (
-            <li key={p.id} className="flex flex-col gap-2 py-2.5">
-              <div className="flex items-center gap-2">
-                <ProjectDot color={p.color} className="size-2.5" />
-                <Input
-                  aria-label={`Name of ${p.name}`}
-                  defaultValue={p.name}
-                  className="h-8"
-                  maxLength={100}
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    if (v && v !== p.name) update.mutate({ id: p.id, name: v });
-                    else e.target.value = p.name;
-                  }}
-                  onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-                />
-                <span className="w-16 shrink-0 text-right text-xs text-muted">{p.openTasks} open</span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  aria-label={`Delete ${p.name}`}
-                  onClick={() => confirm(`Delete "${p.name}"? Its ${p.openTasks} open task(s) are kept without a project.`) && remove.mutate(p.id)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </div>
-              <ColorPicker value={p.color ?? ""} onChange={(c) => update.mutate({ id: p.id, color: c })} label={`Colour of ${p.name}`} compact />
-            </li>
-          ))}
-        </ul>
-      </div>
-    </Modal>
-  );
-}
-
-function ColorPicker({ value, onChange, label, compact }: { value: string; onChange: (c: string) => void; label: string; compact?: boolean }) {
-  return (
-    <div role="radiogroup" aria-label={label} className={clsx("flex flex-wrap gap-1.5", compact && "pl-[18px]")}>
-      {PROJECT_COLORS.map((c) => (
-        <button
-          key={c}
-          type="button"
-          role="radio"
-          aria-checked={value === c}
-          aria-label={c}
-          onClick={() => onChange(c)}
-          className={clsx("rounded-full ring-offset-2 ring-offset-[var(--lp-surface)] transition", compact ? "size-4" : "size-6", value === c ? "ring-2 ring-[var(--lp-ink)]" : "hover:scale-110")}
-          style={{ background: c }}
-        />
-      ))}
-    </div>
   );
 }
 
