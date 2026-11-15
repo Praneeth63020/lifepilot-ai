@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 import type { AppConfigDTO, MeDTO } from "@lifepilot/shared";
 import { api, ApiError } from "./api";
@@ -8,9 +8,16 @@ interface Session {
   config: AppConfigDTO | null;
   loading: boolean;
   refresh: () => Promise<unknown>;
+  /** Call after sign-in, sign-out, registration or account deletion: drops the previous user's cached data. */
+  startNewSession: () => Promise<unknown>;
 }
 
-const Ctx = createContext<Session>({ me: null, config: null, loading: true, refresh: async () => undefined });
+const Ctx = createContext<Session>({ me: null, config: null, loading: true, refresh: async () => undefined, startNewSession: async () => undefined });
+
+/** Remove every cached query except the server config, so one user's data never shows for another. */
+export function clearUserData(qc: QueryClient) {
+  qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "config" && q.queryKey[0] !== "me" });
+}
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
@@ -50,6 +57,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         config: config.data ?? null,
         loading: me.isLoading || config.isLoading,
         refresh: () => qc.invalidateQueries({ queryKey: ["me"] }),
+        startNewSession: () => {
+          clearUserData(qc);
+          return qc.invalidateQueries({ queryKey: ["me"] });
+        },
       }}
     >
       {children}

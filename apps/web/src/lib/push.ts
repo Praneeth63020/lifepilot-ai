@@ -16,6 +16,12 @@ function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+function sameKey(a: ArrayBuffer | null, b: Uint8Array): boolean {
+  if (!a) return false;
+  const x = new Uint8Array(a);
+  return x.length === b.length && x.every((v, i) => v === b[i]);
+}
+
 /** Ask for permission (only from a user gesture) and register this browser for web push. */
 export async function enablePush(vapidPublicKey: string): Promise<{ ok: boolean; reason?: string }> {
   const support = pushSupport();
@@ -25,7 +31,14 @@ export async function enablePush(vapidPublicKey: string): Promise<{ ok: boolean;
   if (perm !== "granted") return { ok: false, reason: "Notification permission was not granted. You can change this in your browser's site settings." };
   const reg = await navigator.serviceWorker.register("/sw.js");
   await navigator.serviceWorker.ready;
-  const sub = (await reg.pushManager.getSubscription()) ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) }));
+  const key = urlBase64ToUint8Array(vapidPublicKey);
+  let sub = await reg.pushManager.getSubscription();
+  // A subscription made with an old VAPID key (key rotation) can't receive pushes; replace it.
+  if (sub && !sameKey(sub.options.applicationServerKey, key)) {
+    await sub.unsubscribe().catch(() => undefined);
+    sub = null;
+  }
+  sub ??= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
   const json = sub.toJSON();
   await api.post("/push/subscriptions", { endpoint: json.endpoint, keys: json.keys });
   return { ok: true };

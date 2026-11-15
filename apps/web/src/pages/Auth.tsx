@@ -1,5 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQueryClient } from "@tanstack/react-query";
+import { useSession } from "../session";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -26,7 +27,7 @@ function AuthShell({ title, subtitle, children }: { title: string; subtitle?: Re
 const loginForm = z.object({ email: z.email("Enter a valid email"), password: z.string().min(1, "Enter your password") });
 
 export function LoginPage() {
-  const qc = useQueryClient();
+  const { startNewSession } = useSession();
   const nav = useNavigate();
   const loc = useLocation();
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +36,7 @@ export function LoginPage() {
     setError(null);
     try {
       await api.post("/auth/login", v);
-      await qc.invalidateQueries({ queryKey: ["me"] });
+      await startNewSession();
       nav((loc.state as { from?: string } | null)?.from ?? "/app");
     } catch (e) {
       setError(errorMessage(e));
@@ -65,7 +66,7 @@ const registerForm = z.object({
 });
 
 export function RegisterPage() {
-  const qc = useQueryClient();
+  const { startNewSession } = useSession();
   const nav = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const f = useForm<z.infer<typeof registerForm>>({ resolver: zodResolver(registerForm) });
@@ -73,7 +74,7 @@ export function RegisterPage() {
     setError(null);
     try {
       await api.post("/auth/register", { ...v, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
-      await qc.invalidateQueries({ queryKey: ["me"] });
+      await startNewSession();
       nav("/onboarding");
     } catch (e) {
       setError(errorMessage(e));

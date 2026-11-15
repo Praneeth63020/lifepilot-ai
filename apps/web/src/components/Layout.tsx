@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import type { NotificationDTO } from "@lifepilot/shared";
 import { api } from "../api";
+import { disablePush } from "../lib/push";
 import { useSession } from "../session";
 import { NotificationWatcher } from "./NotificationWatcher";
 import { Logo } from "./Logo";
@@ -61,7 +62,7 @@ function NavItems({ onNavigate, unseen }: { onNavigate?: () => void; unseen: num
 }
 
 export function AppLayout(): ReactNode {
-  const { me, refresh } = useSession();
+  const { me, startNewSession } = useSession();
   const nav = useNavigate();
   const [open, setOpen] = useState(false);
   const unseen = useQuery({
@@ -70,8 +71,10 @@ export function AppLayout(): ReactNode {
   });
   const count = unseen.data?.items.length ?? 0;
   const logout = async () => {
-    await api.post("/auth/logout");
-    await refresh();
+    // Stop this browser receiving the signed-out user's reminders (best effort).
+    await disablePush().catch(() => undefined);
+    await api.post("/auth/logout").catch(() => undefined);
+    await startNewSession();
     nav("/login");
   };
   const footer = (

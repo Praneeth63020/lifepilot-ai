@@ -31,7 +31,8 @@ export function TaskFormModal({ open, onClose, task }: { open: boolean; onClose:
         dueAt: dueDate ? zonedToISO(dueDate, dueTime || "23:59", tz) : null,
         estimateMin: estimate ? Number(estimate) : null,
         tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
-        recurrence,
+        // The Repeats control is disabled without a due date; don't submit a stale value.
+        recurrence: dueDate ? recurrence : "none",
         ...(task ? {} : { subtasks: subtasks.split("\n").map((s) => s.trim()).filter(Boolean) }),
       };
       return task ? api.patch<TaskDTO>(`/tasks/${task.id}`, body) : api.post<TaskDTO>("/tasks", body);

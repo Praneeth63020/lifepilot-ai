@@ -1,7 +1,7 @@
 import { ArrowRight, Bell, CalendarDays, Inbox, Lock, ShieldCheck, Sparkles, Volume2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Logo } from "../components/Logo";
-import { Badge, Button } from "../components/ui";
+import { Badge, Button, buttonClass } from "../components/ui";
 import { SOUNDS, playSound } from "../lib/sounds";
 import { useSession } from "../session";
 
@@ -17,11 +17,11 @@ const EXAMPLE = [
 export function LandingPage() {
   const { me, config } = useSession();
   const cta = me ? (
-    <Link to="/app"><Button variant="primary">Open LifePilot <ArrowRight className="size-4" /></Button></Link>
+    <Link to="/app" className={buttonClass({ variant: "primary" })}>Open LifePilot <ArrowRight className="size-4" /></Link>
   ) : (
     <>
-      <Link to="/register"><Button variant="primary">Get started <ArrowRight className="size-4" /></Button></Link>
-      <Link to="/login"><Button>Sign in</Button></Link>
+      <Link to="/register" className={buttonClass({ variant: "primary" })}>Get started <ArrowRight className="size-4" /></Link>
+      <Link to="/login" className={buttonClass()}>Sign in</Link>
     </>
   );
 
@@ -32,7 +32,7 @@ export function LandingPage() {
         <nav aria-label="Site" className="flex items-center gap-1 sm:gap-2">
           <a href="#features" className="hidden rounded-lg px-3 py-2 text-sm text-muted hover:text-ink sm:inline">Features</a>
           <a href="#privacy" className="hidden rounded-lg px-3 py-2 text-sm text-muted hover:text-ink sm:inline">Privacy</a>
-          {me ? <Link to="/app"><Button size="sm" variant="primary">Open app</Button></Link> : <Link to="/login"><Button size="sm">Sign in</Button></Link>}
+          {me ? <Link to="/app" className={buttonClass({ size: "sm", variant: "primary" })}>Open app</Link> : <Link to="/login" className={buttonClass({ size: "sm" })}>Sign in</Link>}
         </nav>
       </header>
 

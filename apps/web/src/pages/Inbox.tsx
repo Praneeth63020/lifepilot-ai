@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 import type { ConnectionDTO, InsightDTO, Priority } from "@lifepilot/shared";
 import { api, errorMessage } from "../api";
 import { useToast } from "../components/toast";
-import { Badge, Button, Card, Empty, ErrorNote, Field, Input, Modal, PageHeader, Select, Spinner } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorNote, Field, Input, Modal, PageHeader, Select, Spinner, buttonClass } from "../components/ui";
 import { fmtDateTime, isoToZoned, relative, zonedToISO } from "../lib/format";
 import { useTz } from "../session";
 import { SyncStatus } from "./Dashboard";
@@ -89,7 +89,7 @@ export function InboxPage() {
       {q.data && items.length === 0 && (
         <Card>
           {gmail?.status === "not_connected" || !gmail ? (
-            <Empty title="No email connected" action={<Link to="/app/settings"><Button>Connect Gmail or load demo data</Button></Link>}>Tasks and planning work without it.</Empty>
+            <Empty title="No email connected" action={<Link to="/app/settings" className={buttonClass()}>Connect Gmail or load demo data</Link>}>Tasks and planning work without it.</Empty>
           ) : (
             <Empty title="Nothing to review" />
           )}
