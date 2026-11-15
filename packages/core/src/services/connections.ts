@@ -1,15 +1,16 @@
-import { and, eq, gt, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lt, notInArray, sql } from "drizzle-orm";
 import { calendarEvents, connectedAccounts, oauthStates, syncJobs, syncedEmails } from "@lifepilot/db";
 import { AppError, badRequest, type CoreContext } from "../context.js";
 import { decrypt, encrypt, pkceChallenge, randomToken, sha256 } from "../crypto.js";
 import {
   GoogleAuthRevokedError,
+  GoogleUnauthorizedError,
   buildAuthUrl,
   exchangeCode,
   refreshAccessToken,
   revokeToken,
 } from "../google/client.js";
-import { getMessage, getProfile, listAddedSince, listRecentMessageIds, parseGmailMessage } from "../google/gmail.js";
+import { getMessage, getProfile, isExcludedMessage, listAddedSince, listRecentMessageIds, parseGmailMessage } from "../google/gmail.js";
 import { getPrimaryCalendar, listEvents, mapGoogleEvent } from "../google/calendar.js";
 import { processEmails } from "./insights.js";
 import { getPrefs } from "./prefs.js";
@@ -112,10 +113,10 @@ export async function handleGoogleCallback(
 }
 
 /** Valid access token, refreshing when needed. Marks the account revoked if Google rejects the refresh token. */
-export async function getAccessToken(ctx: CoreContext, account: Account): Promise<string> {
+export async function getAccessToken(ctx: CoreContext, account: Account, opts: { forceRefresh?: boolean } = {}): Promise<string> {
   const google = requireGoogle(ctx);
   const key = ctx.config.encryptionKey;
-  if (account.accessTokenEnc && account.tokenExpiresAt && account.tokenExpiresAt.getTime() - ctx.now().getTime() > 60_000) {
+  if (!opts.forceRefresh && account.accessTokenEnc && account.tokenExpiresAt && account.tokenExpiresAt.getTime() - ctx.now().getTime() > 60_000) {
     return decrypt(account.accessTokenEnc, key);
   }
   if (!account.refreshTokenEnc) {
@@ -137,6 +138,40 @@ export async function getAccessToken(ctx: CoreContext, account: Account): Promis
     if (err instanceof GoogleAuthRevokedError) await markRevoked(ctx, account, "Google access was revoked or expired — please reconnect.");
     throw err;
   }
+}
+
+/**
+ * Run Google API calls with a valid token. If Google rejects the token (401) even though it
+ * hasn't expired (e.g. revoked early, password change), refresh once and retry; if that is
+ * rejected too, access was really revoked: mark the account so the user is asked to reconnect.
+ * Retrying is safe because every sync step is idempotent.
+ */
+async function withGoogleToken<T>(ctx: CoreContext, acct: Account, fn: (token: string) => Promise<T>): Promise<T> {
+  try {
+    return await fn(await getAccessToken(ctx, acct));
+  } catch (err) {
+    if (!(err instanceof GoogleUnauthorizedError)) throw err;
+    ctx.logger.warn({ accountId: acct.id }, "Google rejected the access token; refreshing once");
+  }
+  try {
+    return await fn(await getAccessToken(ctx, acct, { forceRefresh: true }));
+  } catch (err) {
+    if (err instanceof GoogleUnauthorizedError) await markRevoked(ctx, acct, "Google rejected LifePilot's access — please reconnect.");
+    throw err;
+  }
+}
+
+/** Sync jobs still "running" this long after starting were interrupted (worker crash/restart). */
+export const SYNC_JOB_STALE_MS = 15 * 60_000;
+
+/** Mark interrupted sync jobs as failed so they don't show "running" forever. Returns how many. */
+export async function failInterruptedSyncJobs(ctx: CoreContext): Promise<number> {
+  const rows = await ctx.db
+    .update(syncJobs)
+    .set({ status: "failed", error: "Interrupted before it finished (the worker stopped). The next sync will pick up where it left off.", finishedAt: ctx.now() })
+    .where(and(eq(syncJobs.status, "running"), lt(syncJobs.startedAt, new Date(ctx.now().getTime() - SYNC_JOB_STALE_MS))))
+    .returning({ id: syncJobs.id });
+  return rows.length;
 }
 
 async function markRevoked(ctx: CoreContext, account: Account, reason: string) {
@@ -210,9 +245,9 @@ export async function runSync(ctx: CoreContext, accountId: string): Promise<{ st
     if (acct.provider === "demo") {
       items = acct.product === "gmail" ? await syncDemoGmail(ctx, acct.userId, acct.id) : await syncDemoCalendar(ctx, acct.userId, acct.id);
     } else if (acct.product === "gmail") {
-      items = await syncGmail(ctx, acct);
+      items = await withGoogleToken(ctx, acct, (token) => syncGmail(ctx, acct, token));
     } else {
-      items = await syncGoogleCalendar(ctx, acct);
+      items = await withGoogleToken(ctx, acct, (token) => syncGoogleCalendar(ctx, acct, token));
     }
     await ctx.db.update(connectedAccounts).set({ lastSyncAt: ctx.now(), lastSyncError: null }).where(eq(connectedAccounts.id, acct.id));
     await ctx.db.update(syncJobs).set({ status: "succeeded", itemsProcessed: items, finishedAt: ctx.now() }).where(eq(syncJobs.id, job!.id));
@@ -228,8 +263,7 @@ export async function runSync(ctx: CoreContext, accountId: string): Promise<{ st
   }
 }
 
-async function syncGmail(ctx: CoreContext, acct: Account): Promise<number> {
-  const token = await getAccessToken(ctx, acct);
+async function syncGmail(ctx: CoreContext, acct: Account, token: string): Promise<number> {
   let ids: string[];
   let cursor: string;
   const incremental = acct.syncCursor ? await listAddedSince(ctx.fetch, token, acct.syncCursor) : null;
@@ -251,7 +285,10 @@ async function syncGmail(ctx: CoreContext, acct: Account): Promise<number> {
   const knownSet = new Set(known.map((k) => k.id));
   const newIds: string[] = [];
   for (const id of ids.filter((i) => !knownSet.has(i))) {
-    const parsed = parseGmailMessage(await getMessage(ctx.fetch, token, id));
+    const msg = await getMessage(ctx.fetch, token, id);
+    // Defence in depth: the list query and history filter already exclude these.
+    if (isExcludedMessage(msg.labelIds)) continue;
+    const parsed = parseGmailMessage(msg);
     const [row] = await ctx.db
       .insert(syncedEmails)
       .values({ userId: acct.userId, accountId: acct.id, ...parsed })
@@ -269,13 +306,12 @@ async function syncGmail(ctx: CoreContext, acct: Account): Promise<number> {
  * window, and a bounded window keeps data minimal, so each run upserts the window and removes
  * events that disappeared from it. Imported events are read-only.
  */
-async function syncGoogleCalendar(ctx: CoreContext, acct: Account): Promise<number> {
-  const token = await getAccessToken(ctx, acct);
+async function syncGoogleCalendar(ctx: CoreContext, acct: Account, token: string): Promise<number> {
   const prefs = await getPrefs(ctx, acct.userId);
   const now = ctx.now();
   const timeMin = new Date(now.getTime() - 24 * 3_600_000);
   const timeMax = new Date(now.getTime() + ctx.config.calendarWindowDays * 24 * 3_600_000);
-  const { items, timeZone } = await listEvents(ctx.fetch, token, timeMin, timeMax);
+  const { items, timeZone, truncated } = await listEvents(ctx.fetch, token, timeMin, timeMax);
   const seen: string[] = [];
   let upserted = 0;
   for (const raw of items) {
@@ -308,6 +344,11 @@ async function syncGoogleCalendar(ctx: CoreContext, acct: Account): Promise<numb
       upserted++;
       if (row.needsPrep) await syncEventReminder(ctx, acct.userId, row.id);
     }
+  }
+  if (truncated) {
+    // We didn't see every event in the window, so absence doesn't mean deletion.
+    ctx.logger.warn({ accountId: acct.id, fetched: items.length }, "Calendar window has more events than the fetch limit; skipped stale-event clean-up");
+    return upserted;
   }
   const staleWhere = and(
     eq(calendarEvents.accountId, acct.id),

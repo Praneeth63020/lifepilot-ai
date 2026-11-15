@@ -25,6 +25,8 @@ export interface TokenResponse {
 
 /** The refresh token is invalid/revoked — the user must reconnect. */
 export class GoogleAuthRevokedError extends Error {}
+/** A Google API rejected the access token (401). Refreshing once may fix it; if not, access was revoked. */
+export class GoogleUnauthorizedError extends GoogleAuthRevokedError {}
 export class GoogleApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -98,7 +100,7 @@ export async function googleGet<T>(fetchFn: FetchLike, url: string, accessToken:
   for (let attempt = 0; ; attempt++) {
     const res = await fetchFn(url, { headers: { authorization: `Bearer ${accessToken}`, accept: "application/json" } });
     if (res.ok) return (await res.json()) as T;
-    if (res.status === 401) throw new GoogleAuthRevokedError("Access token rejected");
+    if (res.status === 401) throw new GoogleUnauthorizedError("Access token rejected");
     const retryable = res.status === 429 || res.status >= 500 || res.status === 403 && /rateLimit/i.test(await res.clone().text());
     if (!retryable || attempt >= retries) {
       const text = await res.text().catch(() => "");
