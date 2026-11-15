@@ -203,6 +203,7 @@ function EventModal({ event, tz, onClose }: { event: CalendarEventDTO; tz: strin
   const del = useMutation({
     mutationFn: () => api.del(`/calendar/events/${event.id}`),
     onSuccess: () => { qc.invalidateQueries(); toast({ title: "Event deleted", tone: "success" }); onClose(); },
+    onError: (e) => toast({ title: "Couldn't delete event", body: errorMessage(e), tone: "error" }),
   });
   return (
     <Modal open onClose={onClose} title={event.title} footer={<>

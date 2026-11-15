@@ -40,13 +40,32 @@ export function authRoutes(ctx: CoreContext): Router {
     message: { error: { code: "rate_limited", message: "Too many attempts. Try again in a few minutes." } },
   });
 
+  /**
+   * Email delivery must not decide the HTTP outcome: the account/token already exists, and a
+   * failure that only happens for real accounts would reveal which emails are registered.
+   * Failures are logged (without the link) and the user can ask for another email.
+   */
+  async function sendMail(msg: { to: string; subject: string; text: string }, userId: string, purpose: string): Promise<boolean> {
+    try {
+      await ctx.mailer.send(msg);
+      return true;
+    } catch (err) {
+      ctx.logger.error({ err: err instanceof Error ? err.message : String(err), userId, purpose }, "Sending email failed");
+      return false;
+    }
+  }
+
   async function sendVerification(userId: string, email: string) {
     const token = await issueAuthToken(ctx, userId, "verify_email");
-    await ctx.mailer.send({
-      to: email,
-      subject: "Verify your LifePilot email",
-      text: `Confirm your email address: ${ctx.config.webUrl}/verify-email?token=${token}\n\nThis link expires in 48 hours.`,
-    });
+    return sendMail(
+      {
+        to: email,
+        subject: "Verify your LifePilot email",
+        text: `Confirm your email address: ${ctx.config.webUrl}/verify-email?token=${token}\n\nThis link expires in 48 hours.`,
+      },
+      userId,
+      "verify_email",
+    );
   }
 
   r.post("/register", strict, async (req, res) => {
@@ -64,10 +83,10 @@ export function authRoutes(ctx: CoreContext): Router {
         throw err;
       });
     await ctx.db.insert(userPreferences).values({ userId: user!.id, timezone: input.timezone ?? "UTC" });
-    await sendVerification(user!.id, user!.email);
+    const verificationSent = await sendVerification(user!.id, user!.email);
     await createSession(ctx, req, res, user!.id);
     await audit(ctx, user!.id, "auth.registered", "user", user!.id, undefined, req.ip);
-    res.status(201).json({ user: userDTO(user!), preferences: prefsDTO(await getPrefs(ctx, user!.id)) });
+    res.status(201).json({ user: userDTO(user!), preferences: prefsDTO(await getPrefs(ctx, user!.id)), verificationSent });
   });
 
   r.post("/login", strict, async (req, res) => {
@@ -103,7 +122,10 @@ export function authRoutes(ctx: CoreContext): Router {
 
   r.post("/resend-verification", requireUser, strict, async (req, res) => {
     const user = await ctx.db.query.users.findFirst({ where: eq(users.id, uid(req)) });
-    if (user && !user.emailVerifiedAt) await sendVerification(user.id, user.email);
+    if (user && !user.emailVerifiedAt && !(await sendVerification(user.id, user.email))) {
+      // The user is signed in and asked explicitly, so a delivery failure is reported honestly.
+      throw new AppError(502, "email_failed", "We couldn't send the email right now. Please try again in a few minutes.");
+    }
     res.json({ ok: true });
   });
 
@@ -113,11 +135,15 @@ export function authRoutes(ctx: CoreContext): Router {
     const user = await findUserByEmail(ctx, email);
     if (user) {
       const token = await issueAuthToken(ctx, user.id, "reset_password");
-      await ctx.mailer.send({
-        to: user.email,
-        subject: "Reset your LifePilot password",
-        text: `Reset your password: ${ctx.config.webUrl}/reset-password?token=${token}\n\nThis link expires in 1 hour. If you didn't ask for this, ignore this email.`,
-      });
+      await sendMail(
+        {
+          to: user.email,
+          subject: "Reset your LifePilot password",
+          text: `Reset your password: ${ctx.config.webUrl}/reset-password?token=${token}\n\nThis link expires in 1 hour. If you didn't ask for this, ignore this email.`,
+        },
+        user.id,
+        "reset_password",
+      );
       await audit(ctx, user.id, "auth.reset_requested", "user", user.id, undefined, req.ip);
     }
     res.json({ ok: true });
