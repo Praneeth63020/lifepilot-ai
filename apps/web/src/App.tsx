@@ -11,6 +11,7 @@ import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage, VerifyE
 const NotificationsPage = lazy(() => import("./pages/Notifications").then((m) => ({ default: m.NotificationsPage })));
 const OnboardingPage = lazy(() => import("./pages/Onboarding").then((m) => ({ default: m.OnboardingPage })));
 const PlannerPage = lazy(() => import("./pages/Planner").then((m) => ({ default: m.PlannerPage })));
+const ProjectsPage = lazy(() => import("./pages/Projects").then((m) => ({ default: m.ProjectsPage })));
 const SettingsPage = lazy(() => import("./pages/Settings").then((m) => ({ default: m.SettingsPage })));
 const TasksPage = lazy(() => import("./pages/Tasks").then((m) => ({ default: m.TasksPage })));
 import { useSession } from "./session";
@@ -51,6 +52,7 @@ export function App() {
         <Route index element={<DashboardPage />} />
         <Route path="planner" element={<PlannerPage />} />
         <Route path="tasks" element={<TasksPage />} />
+        <Route path="projects" element={<ProjectsPage />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="inbox" element={<InboxPage />} />
         <Route path="notifications" element={<NotificationsPage />} />

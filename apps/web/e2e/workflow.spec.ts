@@ -112,31 +112,46 @@ test("unauthenticated users are sent to sign in, and bad passwords are rejected"
   await expect(page.getByRole("alert")).toContainText("Incorrect email or password");
 });
 
-test("projects: create, assign a task, filter, and use the actions menu", async ({ page }) => {
+test("projects: create, validate, assign a task, track progress, and move between project and tasks", async ({ page }) => {
   await signUp(page);
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Load demo data" }).click();
   await expect(page).toHaveURL(/\/app$/);
 
-  await page.goto("/app/tasks");
-  await page.getByRole("button", { name: "Projects" }).click();
+  await page.getByRole("link", { name: "Projects" }).first().click();
+  await expect(page.getByText("No projects yet")).toBeVisible();
+  await page.getByRole("button", { name: "New project" }).click();
   await page.fill("#p-name", "Job search");
-  await page.getByRole("dialog").getByRole("button", { name: "Add" }).click();
-  await expect(page.getByRole("dialog").getByLabel("Name of Job search")).toBeVisible();
-  await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Create project" }).click();
+  await expect(page.getByRole("link", { name: "Job search" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Edit Prepare slides for design review" }).click();
+  // Duplicate names are caught while typing.
+  await page.getByRole("button", { name: "New project" }).click();
+  await page.fill("#p-name", "job SEARCH");
+  await expect(page.getByText('You already have a project called "Job search".')).toBeVisible();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Create project" })).toBeDisabled();
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+
+  // Assign a task due later this week (demo data), then the card shows progress and the next deadline.
+  await page.goto("/app/tasks");
+  await page.getByRole("button", { name: "Edit Submit passport renewal form" }).click();
   await page.selectOption("#t-proj", { label: "Job search" });
   await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.goto("/app/projects");
+  await expect(page.getByText("0 of 1 done")).toBeVisible();
+  await expect(page.getByText(/Next: Submit passport renewal form/)).toBeVisible();
 
-  // The filter chip shows the open-task count and narrows the list to that project.
-  await page.getByRole("button", { name: /Job search\s*1/ }).click();
-  await expect(page.getByText("Prepare slides for design review")).toBeVisible();
+  // Project → its tasks (filtered, with the project header) and back.
+  await page.getByRole("link", { name: "View tasks" }).click();
+  await expect(page).toHaveURL(/\/app\/tasks\?project=/);
+  await expect(page.getByRole("heading", { name: "Job search" })).toBeVisible();
+  await expect(page.getByText("Submit passport renewal form")).toBeVisible();
   await expect(page.getByText("Weekly grocery order")).toHaveCount(0);
 
-  // Less common actions live in the per-task menu; Escape closes it.
-  await page.getByRole("button", { name: "More actions for Prepare slides for design review" }).click();
+  // Less common task actions live in the per-task menu; Escape closes it.
+  await page.getByRole("button", { name: "More actions for Submit passport renewal form" }).click();
   await expect(page.getByRole("menuitem", { name: "Remind me…" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toHaveCount(0);

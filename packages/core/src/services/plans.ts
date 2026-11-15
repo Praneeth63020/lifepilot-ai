@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, gt, inArray, lt, ne } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, lt, ne } from "drizzle-orm";
 import { calendarEvents, dailyPlanItems, dailyPlans, tasks } from "@lifepilot/db";
-import { generateDailyPlan, localDate, localDayBounds, overlaps, type PlanResult } from "@lifepilot/shared";
+import { formatLocalTime, generateDailyPlan, localDate, localDayBounds, overlaps, type PlanResult } from "@lifepilot/shared";
 import { badRequest, notFound, type CoreContext } from "../context.js";
 import { getPrefs } from "./prefs.js";
 
@@ -66,6 +66,8 @@ export async function generatePlan(ctx: CoreContext, userId: string, dateArg?: s
       breakMin: prefs.breakMin,
       bufferMin: prefs.bufferMin,
       locale: prefs.locale,
+      sleepStartMin: prefs.sleepStartMin,
+      sleepEndMin: prefs.sleepEndMin,
     },
     tasks: openTasks.map((t) => ({
       id: t.id,
@@ -162,4 +164,44 @@ export async function editPlanItems(ctx: CoreContext, userId: string, planId: st
     await ctx.db.update(dailyPlanItems).set({ startAt: iv.start, endAt: iv.end }).where(eq(dailyPlanItems.id, item.id));
   }
   return getPlan(ctx, userId, plan.id);
+}
+
+/**
+ * Why a saved plan no longer matches reality (a meeting was added or moved onto planned work, or
+ * new work is due today). Computed on read; the plan itself is never changed — the user decides
+ * whether to replan. Empty for past days and for plans that still fit.
+ */
+export async function planDrift(ctx: CoreContext, userId: string, plan: FullPlan): Promise<string[]> {
+  if (plan.status === "rejected" || plan.status === "superseded") return [];
+  const now = ctx.now();
+  const prefs = await getPrefs(ctx, userId);
+  const tz = prefs.timezone;
+  const { start, end } = localDayBounds(plan.date, tz);
+  if (end <= now) return [];
+  const out: string[] = [];
+
+  const ahead = plan.items.filter((i) => !i.isFact && i.kind !== "break" && i.endAt > now);
+  const events = await ctx.db.query.calendarEvents.findMany({
+    where: and(eq(calendarEvents.userId, userId), lt(calendarEvents.startAt, end), gt(calendarEvents.endAt, start), ne(calendarEvents.status, "cancelled")),
+  });
+  for (const ev of events) {
+    if (ev.allDay) continue;
+    const clash = ahead.find((b) => overlaps({ start: b.startAt, end: b.endAt }, { start: ev.startAt, end: ev.endAt }));
+    if (clash) out.push(`"${ev.title}" (${formatLocalTime(ev.startAt, tz, prefs.locale)}) now overlaps planned "${clash.title}".`);
+  }
+
+  const accounted = new Set<string>([
+    ...plan.items.map((i) => i.taskId).filter((x): x is string => Boolean(x)),
+    ...plan.details.unscheduled.map((t) => t.taskId),
+    ...plan.details.postponable.map((t) => t.taskId),
+  ]);
+  const dueToday = await ctx.db.query.tasks.findMany({
+    where: and(eq(tasks.userId, userId), eq(tasks.status, "open"), gte(tasks.dueAt, now), lt(tasks.dueAt, end)),
+  });
+  const missing = dueToday.filter((t) => !accounted.has(t.id) && !(t.snoozedUntil && t.snoozedUntil >= end));
+  if (missing.length) {
+    const names = missing.slice(0, 3).map((t) => `"${t.title}"`).join(", ");
+    out.push(`${missing.length === 1 ? `${names} is` : `${missing.length} tasks (${names}${missing.length > 3 ? ", …" : ""}) are`} due today but not in this plan.`);
+  }
+  return out.slice(0, 5);
 }

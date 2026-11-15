@@ -49,6 +49,7 @@ const RECOMMENDATION_META: Record<RecommendationDTO["kind"], { icon: LucideIcon;
   suspicious_email: { icon: ShieldAlert, tone: "text-danger", to: "/app/inbox" },
   no_estimate: { icon: Timer, tone: "text-muted", to: "/app/tasks" },
   not_planned: { icon: Sparkles, tone: "text-accent", to: "/app/planner" },
+  plan_outdated: { icon: RefreshCw, tone: "text-warn", to: "/app/planner" },
 };
 
 export function DashboardPage() {
