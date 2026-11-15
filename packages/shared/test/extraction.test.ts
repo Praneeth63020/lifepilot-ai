@@ -124,3 +124,80 @@ describe("model deadline verification", () => {
     expect(r.deadlineAt).toBeNull();
   });
 });
+
+describe("real-world deadline cases", () => {
+  const insight = (subject: string, body: string) => extractEmailInsight({ subject, body, fromAddress: "x@example.com", receivedAt: received }, { timezone: tz });
+
+  it("takes the new date when a deadline is extended or moved, and says it changed", () => {
+    const a = insight("Assignment 3 deadline extended", "Good news: the deadline has been extended from Nov 10 to Nov 14. Please submit via the portal.");
+    expect(local(a.deadline.deadlineAt)).toBe("2026-11-14 23:59");
+    expect(a.deadline.isChange).toBe(true);
+    expect(a.whyItMatters).toMatch(/^Changes a deadline/);
+    const b = insight("Re: Report", "We've moved the report deadline to November 20 at 5 PM.");
+    expect(local(b.deadline.deadlineAt)).toBe("2026-11-20 17:00");
+    const c = insight("Update", "Old due date: due Nov 10. New deadline is Nov 17.");
+    expect(local(c.deadline.deadlineAt)).toBe("2026-11-17 23:59");
+  });
+
+  it("uses the earliest of several deadlines and lists the others instead of dropping them", () => {
+    const r = insight("Form", "Please submit the form by Nov 10. Late forms accepted by Nov 12 with a penalty.");
+    expect(local(r.deadline.deadlineAt)).toBe("2026-11-10 23:59");
+    expect(r.deadline.alsoMentioned).toEqual(["by Nov 12"]);
+    expect(r.whyItMatters).toMatch(/Also mentions "by Nov 12"/);
+  });
+
+  it("treats the same day stated twice as one deadline, preferring the stated time", () => {
+    const r = extractDeadline("Submit by Nov 18. The portal closes on Nov 18 at 11:59 PM.", received, tz);
+    expect(r.deadlineText).toBe("closes on Nov 18 at 11:59 PM");
+    expect(r.timeAssumed).toBe(false);
+    expect(r.alsoMentioned).toBeUndefined();
+  });
+
+  it("honours an explicit timezone after the time", () => {
+    expect(extractDeadline("Apply by November 10, 2026 at 5 PM EST.", received, tz).deadlineAt?.toISOString()).toBe("2026-11-10T22:00:00.000Z");
+    expect(extractDeadline("Apply by November 10, 2026 at 5 PM (GMT).", received, tz).deadlineAt?.toISOString()).toBe("2026-11-10T17:00:00.000Z");
+    // No zone written → the user's timezone, as before.
+    expect(local(extractDeadline("Apply by November 10 at 5 PM.", received, tz).deadlineAt)).toBe("2026-11-10 17:00");
+  });
+
+  it("does not turn promotions into deadlines or tasks", () => {
+    const r = insight("Black Friday: 50% off everything", "Shop now — the sale runs until Nov 30. Unsubscribe anytime.");
+    expect(r.deadline.certainty).toBe("none");
+    expect(r.category).toBe("low_priority");
+    expect(r.proposedTaskTitle).toBeNull();
+    expect(r.signals).toContain("promotion_date_ignored");
+  });
+
+  it("still finds bill and renewal deadlines that carry an unsubscribe footer", () => {
+    const bill = insight("Electricity bill", "Your bill of Rs 2,340 is due on 20/11/2026. To stop these emails, unsubscribe.");
+    expect(local(bill.deadline.deadlineAt)).toBe("2026-11-20 23:59");
+    expect(bill.proposedTaskTitle).not.toBeNull();
+    const renewal = insight("Your plan", "Your plan expires on Dec 1, 2026. Renew to keep access. Unsubscribe from reminders.");
+    expect(local(renewal.deadline.deadlineAt)).toBe("2026-12-01 23:59");
+  });
+
+  it("ignores dates that are only mentioned, and words that merely contain a trigger", () => {
+    expect(insight("Office closure", "Our office will be closed on Nov 11 for the holiday. No action needed.").deadline.certainty).toBe("none");
+    expect(extractDeadline("Visit a store nearby Nov 3 for pickup.", received, tz).certainty).toBe("none");
+  });
+
+  it("recognises appointments as meetings", () => {
+    expect(insight("Appointment confirmed", "Your dental appointment is confirmed for Nov 18 at 3:30 PM.").category).toBe("meeting");
+  });
+});
+
+describe("model deadline verification with several dates", () => {
+  const email = { subject: "Form", body: "Submit by Nov 10. Final submissions close on Nov 12 at 6 PM.", fromAddress: "a@b.c", receivedAt: received };
+
+  it("accepts the model's pick when it is one of the email's own deadline phrases", () => {
+    const r = verifyModelDeadline(email, tz, { deadlineText: "close on Nov 12 at 6 PM", deadlineAt: DateTime.fromISO("2026-11-12T18:00", { zone: tz }).toJSDate() });
+    expect(local(r.deadlineAt)).toBe("2026-11-12 18:00");
+    expect(r.certainty).toBe("explicit");
+  });
+
+  it("marks a real phrase with the wrong instant as needing confirmation", () => {
+    const r = verifyModelDeadline(email, tz, { deadlineText: "Submit by Nov 10", deadlineAt: DateTime.fromISO("2026-11-11T09:00", { zone: tz }).toJSDate() });
+    expect(r.certainty).toBe("ambiguous");
+    expect(r.deadlineAt).toBeNull();
+  });
+});
