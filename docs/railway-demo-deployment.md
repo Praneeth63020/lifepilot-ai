@@ -54,6 +54,12 @@ API_URL=https://YOUR-WEB-DOMAIN.up.railway.app
 WEB_URL=https://YOUR-WEB-DOMAIN.up.railway.app
 ```
 
+Also set this on `api`, because requests pass through two proxies (Railway's edge, then the `web` nginx). Without it, every visitor gets the edge's IP and shares one login rate limit:
+
+```env
+TRUST_PROXY_HOPS=2
+```
+
 The app deliberately serves web and API from one origin so its httpOnly session cookie remains same-origin. The API does not need a public domain. Configure the `web` service's public domain to target port `8080`.
 
 On the `web` service set:

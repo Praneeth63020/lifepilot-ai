@@ -35,7 +35,7 @@ docker compose -f infrastructure/docker-compose.yml --profile app up -d --build
 
 - The `api` image runs migrations, then starts. With multiple replicas, run `node dist/scripts/migrate.js` as a one-off release step and start with `node dist/server.js`.
 - The `web` image is nginx serving the SPA and proxying `/api` to `http://api:4000`. Change `infrastructure/nginx.conf` for your topology.
-- Behind a load balancer, the API trusts one proxy hop in production (`trust proxy = 1`) for client IPs and secure cookies.
+- Set `TRUST_PROXY_HOPS` to the number of reverse proxies in front of the API (default: 1 in production, 0 otherwise). Rate limiting keys on the client IP, so a wrong value makes every user share one bucket. Example: Railway edge → nginx → API is `2`.
 
 > These Dockerfiles were written but not built in the development environment (no Docker daemon was available). The bundled `dist/` outputs and the hoisted `pnpm deploy` layout they use *were* run and verified.
 
@@ -58,7 +58,7 @@ node apps/worker/dist/main.js
   - `Reminder delivery failed permanently`
   - `Sync attempt failed`
   - `AI extraction failed; using rule-based fallback`
-- Failed jobs stay in Redis for 30 days. Inspect them with any BullMQ dashboard (for example `bull-board`) pointed at prefix `lifepilot`, queues `reminders` and `sync`.
+- Failed reminder jobs stay in Redis for 30 days; the sync queue keeps the last 1000 failed jobs. Inspect them with any BullMQ dashboard (for example `bull-board`) pointed at prefix `lifepilot`, queues `reminders` and `sync`.
 - In-app, users can see sync history (**Settings → Connections**) and delivery status per notification (**Notifications**).
 
 ## Mobile (phase 2, not built)

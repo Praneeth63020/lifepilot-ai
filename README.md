@@ -261,7 +261,9 @@ lifepilot-ai/
 ├── infrastructure/
 │   ├── docker-compose.yml
 │   ├── Dockerfile
-│   └── nginx/
+│   ├── Dockerfile.railway-{api,web,worker}
+│   ├── nginx.conf
+│   └── nginx.railway.conf.template
 │
 ├── scripts/
 │   └── generate-sounds.mjs
@@ -271,6 +273,7 @@ lifepilot-ai/
 │   ├── setup
 │   ├── api
 │   ├── deployment
+│   ├── railway-demo-deployment
 │   └── security
 │
 ├── .env.example
@@ -308,7 +311,7 @@ The following instructions describe the local development setup.
 
 Make sure you have the following installed:
 
-- Node.js 22+
+- Node.js 22.9+
 - pnpm 10+
 - PostgreSQL 16
 - Redis 7
