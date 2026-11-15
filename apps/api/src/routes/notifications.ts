@@ -16,6 +16,17 @@ import { uid } from "../auth.js";
 import { idParam, parse } from "../http.js";
 import { notificationDTO, reminderDTO } from "../serialize.js";
 
+/** Display titles for reminders: the task or event title, else the note. Same for list, create and snooze. */
+async function reminderTitles(ctx: CoreContext, rows: (typeof reminders.$inferSelect)[]): Promise<Map<string, string>> {
+  const taskIds = rows.map((x) => x.taskId).filter((x): x is string => Boolean(x));
+  const eventIds = rows.map((x) => x.eventId).filter((x): x is string => Boolean(x));
+  const ts = taskIds.length ? await ctx.db.select({ id: tasks.id, title: tasks.title }).from(tasks).where(inArray(tasks.id, taskIds)) : [];
+  const es = eventIds.length ? await ctx.db.select({ id: calendarEvents.id, title: calendarEvents.title }).from(calendarEvents).where(inArray(calendarEvents.id, eventIds)) : [];
+  const taskTitle = new Map(ts.map((t) => [t.id, t.title]));
+  const eventTitle = new Map(es.map((e) => [e.id, e.title]));
+  return new Map(rows.map((x) => [x.id, (x.taskId && taskTitle.get(x.taskId)) || (x.eventId && eventTitle.get(x.eventId)) || x.note || "Reminder"]));
+}
+
 export function reminderRoutes(ctx: CoreContext): Router {
   const r = Router();
 
@@ -27,25 +38,20 @@ export function reminderRoutes(ctx: CoreContext): Router {
       orderBy: asc(reminders.remindAt),
       limit: 200,
     });
-    const taskIds = rows.map((x) => x.taskId).filter((x): x is string => Boolean(x));
-    const eventIds = rows.map((x) => x.eventId).filter((x): x is string => Boolean(x));
-    const ts = taskIds.length ? await ctx.db.select({ id: tasks.id, title: tasks.title }).from(tasks).where(inArray(tasks.id, taskIds)) : [];
-    const es = eventIds.length ? await ctx.db.select({ id: calendarEvents.id, title: calendarEvents.title }).from(calendarEvents).where(inArray(calendarEvents.id, eventIds)) : [];
-    const title = (x: (typeof rows)[number]) =>
-      ts.find((t) => t.id === x.taskId)?.title ?? es.find((e) => e.id === x.eventId)?.title ?? x.note ?? "Reminder";
-    res.json({ items: rows.map((x) => reminderDTO(x, title(x))) });
+    const titles = await reminderTitles(ctx, rows);
+    res.json({ items: rows.map((x) => reminderDTO(x, titles.get(x.id)!)) });
   });
 
   r.post("/", async (req, res) => {
     const input = parse(reminderCreateSchema, req.body);
     const row = await createCustomReminder(ctx, uid(req), { ...input, remindAt: new Date(input.remindAt) });
-    res.status(201).json(reminderDTO(row, input.note ?? "Reminder"));
+    res.status(201).json(reminderDTO(row, (await reminderTitles(ctx, [row])).get(row.id)!));
   });
 
   r.post("/:id/snooze", async (req, res) => {
     const { minutes } = parse(snoozeSchema, req.body);
     const row = await snoozeReminder(ctx, uid(req), idParam(req), minutes);
-    res.json(reminderDTO(row, row.note ?? "Reminder"));
+    res.json(reminderDTO(row, (await reminderTitles(ctx, [row])).get(row.id)!));
   });
 
   r.delete("/:id", async (req, res) => {

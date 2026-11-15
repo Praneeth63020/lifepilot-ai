@@ -25,6 +25,11 @@ import {
 import { parse } from "../http.js";
 import { prefsDTO, userDTO } from "../serialize.js";
 
+function isUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: string; cause?: { code?: string } } | null;
+  return e?.code === "23505" || e?.cause?.code === "23505";
+}
+
 export function authRoutes(ctx: CoreContext): Router {
   const r = Router();
   const strict = rateLimit({
@@ -52,7 +57,12 @@ export function authRoutes(ctx: CoreContext): Router {
     const [user] = await ctx.db
       .insert(users)
       .values({ email: input.email, name: input.name, passwordHash: await hashPassword(input.password) })
-      .returning();
+      .returning()
+      .catch((err: unknown) => {
+        // Two sign-ups racing past the check above: the unique index decides, report it the same way.
+        if (isUniqueViolation(err)) throw new AppError(409, "email_taken", "An account with this email already exists");
+        throw err;
+      });
     await ctx.db.insert(userPreferences).values({ userId: user!.id, timezone: input.timezone ?? "UTC" });
     await sendVerification(user!.id, user!.email);
     await createSession(ctx, req, res, user!.id);
