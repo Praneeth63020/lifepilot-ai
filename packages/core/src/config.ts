@@ -19,6 +19,8 @@ const envSchema = z
     DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
     REDIS_URL: z.string().min(1, "REDIS_URL is required"),
     API_PORT: z.coerce.number().int().default(4000),
+    // Reverse proxies in front of the API (load balancer, nginx, …). Unset → 1 in production, 0 otherwise.
+    TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).optional(),
     API_URL: z.url().default("http://localhost:4000"),
     WEB_URL: z.url().default("http://localhost:5173"),
     MOBILE_DEEP_LINK_SCHEME: z.string().default("lifepilot"),
@@ -76,6 +78,7 @@ function buildConfig(env: z.infer<typeof envSchema>) {
     databaseUrl: env.DATABASE_URL,
     redisUrl: env.REDIS_URL,
     port: env.API_PORT,
+    trustProxyHops: env.TRUST_PROXY_HOPS ?? (env.NODE_ENV === "production" ? 1 : 0),
     apiUrl: env.API_URL.replace(/\/$/, ""),
     webUrl: env.WEB_URL.replace(/\/$/, ""),
     sessionSecret: env.SESSION_SECRET,

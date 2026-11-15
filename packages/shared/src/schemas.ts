@@ -57,22 +57,31 @@ export const preferencesSchema = z
     path: ["workEndMin"],
   });
 
-export const taskCreateSchema = z.object({
+// Shared task fields WITHOUT defaults. Defaults belong only on create: in zod 4, `.partial()`
+// still applies inner `.default()`s, which would make a PATCH silently reset untouched fields.
+const taskFields = {
   title: z.string().trim().min(1).max(300),
   description: z.string().max(5000).nullish(),
-  priority: prioritySchema.default("medium"),
+  priority: prioritySchema,
   dueAt: isoDateTime.nullish(),
   estimateMin: z.number().int().min(5).max(24 * 60).nullish(),
   category: z.string().trim().max(60).nullish(),
-  tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+  tags: z.array(z.string().trim().min(1).max(40)).max(20),
   projectId: z.uuid().nullish(),
-  recurrence: z.enum(["none", "daily", "weekly", "monthly"]).default("none"),
+  recurrence: z.enum(["none", "daily", "weekly", "monthly"]),
   dependsOnTaskId: z.uuid().nullish(),
+};
+
+export const taskCreateSchema = z.object({
+  ...taskFields,
+  priority: taskFields.priority.default("medium"),
+  tags: taskFields.tags.default([]),
+  recurrence: taskFields.recurrence.default("none"),
   subtasks: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
 });
 
-export const taskUpdateSchema = taskCreateSchema
-  .omit({ subtasks: true })
+export const taskUpdateSchema = z
+  .object(taskFields)
   .partial()
   .extend({ snoozedUntil: isoDateTime.nullish() });
 

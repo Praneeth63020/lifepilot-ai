@@ -4,6 +4,20 @@ import { useEffect, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes,
 import type { Priority } from "@lifepilot/shared";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
+
+/** Button styling, also for links that should look like buttons (never nest a <button> in an <a>). */
+export function buttonClass({ variant = "secondary", size = "md", className }: { variant?: Variant; size?: "sm" | "md"; className?: string } = {}) {
+  return clsx(
+    "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+    size === "sm" ? "h-8 px-2.5 text-sm" : "h-10 px-4 text-sm",
+    variant === "primary" && "bg-accent text-accent-ink hover:opacity-90",
+    variant === "secondary" && "border border-line bg-surface text-ink hover:bg-surface-2",
+    variant === "ghost" && "text-muted hover:bg-surface-2 hover:text-ink",
+    variant === "danger" && "border border-danger/40 text-danger hover:bg-danger/10",
+    className,
+  );
+}
+
 export function Button({
   variant = "secondary",
   size = "md",
@@ -16,15 +30,7 @@ export function Button({
     <button
       {...rest}
       disabled={rest.disabled || loading}
-      className={clsx(
-        "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-        size === "sm" ? "h-8 px-2.5 text-sm" : "h-10 px-4 text-sm",
-        variant === "primary" && "bg-accent text-accent-ink hover:opacity-90",
-        variant === "secondary" && "border border-line bg-surface text-ink hover:bg-surface-2",
-        variant === "ghost" && "text-muted hover:bg-surface-2 hover:text-ink",
-        variant === "danger" && "border border-danger/40 text-danger hover:bg-danger/10",
-        className,
-      )}
+      className={buttonClass({ variant, size, className })}
     >
       {loading && <Loader2 className="size-4 animate-spin" aria-hidden />}
       {children}
@@ -161,13 +167,39 @@ export function Toggle({ checked, onChange, label, description, disabled }: { ch
 
 export function Modal({ open, onClose, title, children, footer }: { open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  // Callers pass inline arrows; keep the latest in a ref so re-renders don't re-run the focus effect.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const focusables = () => [...(ref.current?.querySelectorAll<HTMLElement>("input,select,textarea,button,a[href]") ?? [])].filter((el) => !el.hasAttribute("disabled"));
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCloseRef.current();
+      if (e.key !== "Tab") return;
+      // Keep keyboard focus inside the dialog.
+      const els = focusables();
+      if (!els.length) return;
+      const first = els[0]!;
+      const last = els[els.length - 1]!;
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
     window.addEventListener("keydown", onKey);
-    ref.current?.querySelector<HTMLElement>("input,select,textarea,button")?.focus();
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    // Focus the first form field, not the header's Close button.
+    (ref.current?.querySelector<HTMLElement>("input,select,textarea") ?? focusables()[0])?.focus();
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      previouslyFocused?.focus?.();
+    };
+  }, [open]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>

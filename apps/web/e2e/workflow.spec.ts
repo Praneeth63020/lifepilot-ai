@@ -82,6 +82,10 @@ test("full demo workflow", async ({ page }) => {
 
   // 9. A calendar conflict produces alternative times
   await page.goto("/app/calendar");
+  // The demo conflict is tomorrow. Use the day view and step forward: in the Monday–Sunday week
+  // view, "tomorrow" is in next week whenever the test runs on a Sunday.
+  await page.getByRole("tab", { name: "day" }).click();
+  await page.getByRole("button", { name: "Next" }).click();
   await page.getByRole("button", { name: "suggest new times" }).first().click();
   const evDialog = page.getByRole("dialog");
   await expect(evDialog.getByText("Alternative times")).toBeVisible();

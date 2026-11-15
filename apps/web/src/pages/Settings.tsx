@@ -7,7 +7,7 @@ import type { ConnectionDTO, PreferencesDTO } from "@lifepilot/shared";
 import { api, errorMessage } from "../api";
 import { SoundPicker, TimeOfDay, TimezoneSelect } from "../components/prefs";
 import { useToast } from "../components/toast";
-import { Badge, Button, Card, ErrorNote, Field, Input, PageHeader, Select, Toggle } from "../components/ui";
+import { Badge, Button, Card, ErrorNote, Field, Input, PageHeader, Select, Toggle, buttonClass } from "../components/ui";
 import { fmtDateTime, relative } from "../lib/format";
 import { disablePush, enablePush, pushSupport } from "../lib/push";
 import { useSession } from "../session";
@@ -69,6 +69,8 @@ export function SettingsPage() {
 function GeneralTab() {
   const { me } = useSession();
   const [p, setP] = useState(me!.preferences);
+  // Raw text for the senders field: re-joining the parsed list on every keystroke swallowed commas.
+  const [vipText, setVipText] = useState(me!.preferences.importantSenders.join(", "));
   const save = usePrefsSaver();
   const set = <K extends keyof PreferencesDTO>(k: K, v: PreferencesDTO[K]) => setP((x) => ({ ...x, [k]: v }));
   return (
@@ -99,7 +101,14 @@ function GeneralTab() {
           </Field>
           <Toggle checked={p.aiEnabled} onChange={(v) => set("aiEnabled", v)} label="AI email analysis" description="When off, nothing is sent to an AI model; the built-in rule engine is used." />
           <Field label="Important senders" htmlFor="g-vip" hint="Comma-separated addresses or domains, e.g. boss@company.com, university.edu. Their emails rank higher.">
-            <Input id="g-vip" value={p.importantSenders.join(", ")} onChange={(e) => set("importantSenders", e.target.value.split(",").map((s) => s.trim()).filter(Boolean))} />
+            <Input
+              id="g-vip"
+              value={vipText}
+              onChange={(e) => {
+                setVipText(e.target.value);
+                set("importantSenders", e.target.value.split(",").map((s) => s.trim()).filter(Boolean));
+              }}
+            />
           </Field>
         </div>
       </Card>
@@ -318,13 +327,13 @@ function ConnectionsTab() {
 }
 
 function PrivacyTab() {
-  const { refresh } = useSession();
+  const { startNewSession } = useSession();
   const nav = useNavigate();
   const toast = useToast();
   const [password, setPassword] = useState("");
   const del = useMutation({
     mutationFn: () => api.del("/account", { password }),
-    onSuccess: async () => { await refresh(); nav("/"); toast({ title: "Your account and data were deleted", tone: "success" }); },
+    onSuccess: async () => { await disablePush().catch(() => undefined); await startNewSession(); nav("/"); toast({ title: "Your account and data were deleted", tone: "success" }); },
   });
   return (
     <div className="grid gap-5 lg:grid-cols-2">
@@ -338,7 +347,7 @@ function PrivacyTab() {
       </Card>
       <Card title="Export your data">
         <p className="text-sm text-muted">Download everything as JSON (secrets excluded).</p>
-        <a href="/api/v1/account/export" download><Button className="mt-3" size="sm"><Download className="size-4" /> Download export</Button></a>
+        <a href="/api/v1/account/export" download className={buttonClass({ size: "sm", className: "mt-3" })}><Download className="size-4" /> Download export</a>
       </Card>
       <Card title="Delete account" className="border-danger/40 lg:col-span-2">
         <p className="text-sm text-muted">Revokes Google access, cancels all reminders and permanently deletes your account and every piece of data. This can't be undone.</p>

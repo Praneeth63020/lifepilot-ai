@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 22+ and pnpm 10 (`corepack enable`)
+- Node.js 22.9+ and pnpm 10 (`corepack enable`)
 - PostgreSQL 16 and Redis 7 — run them with Docker: `docker compose -f infrastructure/docker-compose.yml up -d postgres redis`
   (Redis must persist data — the compose file enables AOF — because scheduled reminders live there.)
 

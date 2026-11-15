@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, desc, eq, inArray, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { connectedAccounts, emailInsights, syncedEmails, tasks } from "@lifepilot/db";
 import { approveInsight, getInsight, type CoreContext } from "@lifepilot/core";
@@ -19,6 +19,8 @@ export async function loadInsights(ctx: CoreContext, userId: string, opts: { sta
   if (opts.status === "open") conds.push(inArray(emailInsights.status, ["new", "task_created"]));
   else if (opts.status && opts.status !== "all") conds.push(eq(emailInsights.status, opts.status as "new"));
   if (opts.ids) conds.push(inArray(emailInsights.id, opts.ids));
+  // Filter in SQL (before LIMIT): filtering afterwards returned short or empty pages.
+  if (opts.category) conds.push(sql`coalesce(${emailInsights.userCategory}, ${emailInsights.category}) = ${opts.category}`);
   const rows = await ctx.db
     .select({ insight: emailInsights, email: syncedEmails, provider: connectedAccounts.provider })
     .from(emailInsights)
@@ -27,8 +29,7 @@ export async function loadInsights(ctx: CoreContext, userId: string, opts: { sta
     .where(and(...conds))
     .orderBy(desc(emailInsights.importanceScore), desc(syncedEmails.receivedAt))
     .limit(opts.limit);
-  const filtered = opts.category ? rows.filter((r) => (r.insight.userCategory ?? r.insight.category) === opts.category) : rows;
-  const emailIds = filtered.map((r) => r.email.id);
+  const emailIds = rows.map((r) => r.email.id);
   const linked = emailIds.length
     ? await ctx.db
         .select({ id: tasks.id, sourceId: tasks.sourceId })
@@ -36,7 +37,7 @@ export async function loadInsights(ctx: CoreContext, userId: string, opts: { sta
         .where(and(eq(tasks.userId, userId), eq(tasks.sourceType, "email"), inArray(tasks.sourceId, emailIds)))
     : [];
   const taskBySource = new Map(linked.map((t) => [t.sourceId, t.id]));
-  return filtered.map((r) => insightDTO(r.insight, r.email, r.provider, taskBySource.get(r.email.id) ?? null));
+  return rows.map((r) => insightDTO(r.insight, r.email, r.provider, taskBySource.get(r.email.id) ?? null));
 }
 
 export function insightRoutes(ctx: CoreContext): Router {

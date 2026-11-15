@@ -23,12 +23,23 @@ reconcileScheduledReminders(ctx)
   .then((n) => ctx.logger.info({ reconciled: n }, "LifePilot worker started"))
   .catch((err) => ctx.logger.error({ err }, "Reminder reconciliation failed"));
 
+let shuttingDown = false;
 const shutdown = async (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   ctx.logger.info({ signal }, "Worker shutting down (finishing active jobs)");
-  await workers.close();
-  await workerRedis.quit().catch(() => undefined);
-  await close();
+  // Don't outlive the orchestrator's stop grace period; unfinished jobs are retried by BullMQ.
+  setTimeout(() => process.exit(1), 25_000).unref();
+  try {
+    await workers.close();
+    await workerRedis.quit().catch(() => undefined);
+    await close();
+  } catch (err) {
+    ctx.logger.error({ err }, "Error during worker shutdown");
+    process.exit(1);
+  }
   process.exit(0);
 };
+process.on("unhandledRejection", (err) => ctx.logger.error({ err }, "Unhandled promise rejection"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));

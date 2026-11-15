@@ -121,8 +121,11 @@ export function calendarRoutes(ctx: CoreContext): Router {
     const target = await ctx.db.query.calendarEvents.findFirst({ where: and(eq(calendarEvents.id, idParam(req)), eq(calendarEvents.userId, userId)) });
     if (!target) throw notFound("Event");
     const prefs = await getPrefs(ctx, userId);
-    const from = new Date(Math.min(target.startAt.getTime(), ctx.now().getTime()));
-    const to = new Date(from.getTime() + 4 * 86_400_000);
+    // Suggestions are searched from the later of (event start, now) across the next few local days,
+    // so load the events for that same window — not one anchored at "now" for far-future events.
+    const anchor = Math.max(target.startAt.getTime(), ctx.now().getTime());
+    const from = new Date(anchor - 86_400_000);
+    const to = new Date(anchor + 5 * 86_400_000);
     const events = await eventsInRange(userId, from, to);
     const slots = proposeAlternativeSlots({ target, events, now: ctx.now(), prefs });
     res.json({

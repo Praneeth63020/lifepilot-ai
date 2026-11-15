@@ -88,6 +88,15 @@ describe("demo mode inbox (anticipation engine)", () => {
     expect(promo.status).toBe("reviewed");
   });
 
+  it("filters by category before applying the limit", async () => {
+    const { agent, list } = await setup();
+    const top = list[0]!.category;
+    const other = list.find((i) => i.category !== top)!.category;
+    const res = (await agent.get("/api/v1/insights").query({ status: "all", category: other, limit: 1 }).expect(200)).body.items as Insight[];
+    expect(res).toHaveLength(1);
+    expect(res[0]!.category).toBe(other);
+  });
+
   it("lets the user correct the category and dismiss", async () => {
     const { agent, find } = await setup();
     const flight = find("Booking confirmed");

@@ -28,9 +28,18 @@ export function syncSchedulerId(accountId: string): string {
   return `sync_${accountId}`;
 }
 
+/** Connection for BullMQ Workers (blocking commands). maxRetriesPerRequest: null is required by BullMQ workers. */
 export function createRedis(url: string): Redis {
-  // maxRetriesPerRequest: null is required by BullMQ workers.
   return new Redis(url, { maxRetriesPerRequest: null, enableReadyCheck: true });
+}
+
+/**
+ * Connection for producers (API/worker Queues) and health checks. Fails fast during a Redis outage
+ * instead of queueing commands forever, so requests and /health/ready don't hang. The database stays
+ * the source of truth; the worker's startup reconciliation re-enqueues anything that was missed.
+ */
+export function createProducerRedis(url: string): Redis {
+  return new Redis(url, { maxRetriesPerRequest: 2, enableReadyCheck: true });
 }
 
 /** Producer-side facade so the API never deals with BullMQ details directly. */

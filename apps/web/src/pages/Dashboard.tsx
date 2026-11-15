@@ -6,7 +6,7 @@ import type { ConnectionDTO, DashboardDTO } from "@lifepilot/shared";
 import { api, errorMessage } from "../api";
 import { PlanTimeline } from "../components/PlanTimeline";
 import { useToast } from "../components/toast";
-import { Badge, Button, Card, Empty, ErrorNote, Input, PriorityBadge, Spinner } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorNote, Input, PriorityBadge, Spinner, buttonClass } from "../components/ui";
 import { fmtDate, fmtDateTime, fmtTime, relative } from "../lib/format";
 import { useSession } from "../session";
 
@@ -58,6 +58,14 @@ export function DashboardPage() {
     },
     onError: (e) => toast({ title: "Couldn't add task", body: errorMessage(e), tone: "error" }),
   });
+  const replan = useMutation({
+    mutationFn: () => api.post("/plans/replan"),
+    onSuccess: () => {
+      qc.invalidateQueries();
+      nav("/app/planner");
+    },
+    onError: (e) => toast({ title: "Couldn't replan", body: errorMessage(e), tone: "error" }),
+  });
   const complete = useMutation({
     mutationFn: (id: string) => api.post(`/tasks/${id}/complete`),
     onSuccess: () => qc.invalidateQueries(),
@@ -108,7 +116,7 @@ export function DashboardPage() {
 
       {noData && (
         <Card>
-          <Empty icon={<Sparkles className="size-6" />} title="Nothing here yet" action={<Link to="/app/settings"><Button>Connect accounts or load demo data</Button></Link>}>
+          <Empty icon={<Sparkles className="size-6" />} title="Nothing here yet" action={<Link to="/app/settings" className={buttonClass()}>Connect accounts or load demo data</Link>}>
             Add a task above, create calendar events, or connect Gmail and Calendar so LifePilot can find deadlines for you.
           </Empty>
         </Card>
@@ -193,7 +201,7 @@ export function DashboardPage() {
                 {d.recommendations.map((r) => <li key={r}>{r}</li>)}
               </ul>
               {d.plan && (
-                <Button className="mt-3" size="sm" onClick={() => api.post("/plans/replan").then(() => { qc.invalidateQueries(); nav("/app/planner"); })}>
+                <Button className="mt-3" size="sm" loading={replan.isPending} onClick={() => replan.mutate()}>
                   <RefreshCw className="size-3.5" /> Replan from now
                 </Button>
               )}

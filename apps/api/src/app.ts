@@ -25,10 +25,19 @@ export interface AppOptions {
   checkRedis?: () => Promise<boolean>;
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timeout")), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+}
+
 export function createApp(ctx: CoreContext, opts: AppOptions = {}) {
   const app = express();
   app.disable("x-powered-by");
-  app.set("trust proxy", ctx.config.isProd ? 1 : false);
+  // Hop count must match the real proxy chain or every client shares one rate-limit bucket.
+  app.set("trust proxy", ctx.config.trustProxyHops > 0 ? ctx.config.trustProxyHops : false);
 
   app.use(helmet());
   app.use(
@@ -69,7 +78,7 @@ export function createApp(ctx: CoreContext, opts: AppOptions = {}) {
   });
   v1.get("/health/ready", async (_req, res) => {
     const db = await ctx.db.execute(sql`select 1`).then(() => true, () => false);
-    const redis = opts.checkRedis ? await opts.checkRedis().catch(() => false) : true;
+    const redis = opts.checkRedis ? await withTimeout(opts.checkRedis(), 2000).catch(() => false) : true;
     res.status(db && redis ? 200 : 503).json({ status: db && redis ? "ready" : "degraded", db, redis });
   });
   v1.get("/config", (_req, res) => {
