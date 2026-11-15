@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertTriangle, CheckCheck, ExternalLink, ListPlus, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, ArrowRightCircle, CalendarClock, CheckCheck, ExternalLink, ListPlus, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { ConnectionDTO, InsightDTO, Priority } from "@lifepilot/shared";
@@ -99,44 +99,44 @@ export function InboxPage() {
       <ul className="flex flex-col gap-3">
         {items.map((i) => (
           <li key={i.id}>
-            <Card className={clsx(i.suspicious && "border-danger/50")}>
+            <Card className={clsx(i.suspicious && "border-danger/50", i.status === "dismissed" && "opacity-70")}>
               {i.suspicious && (
                 <p className="mb-3 flex gap-2 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                   This email contains instructions aimed at an AI assistant. LifePilot ignored them and took no action. Treat it as possible phishing.
                 </p>
               )}
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <h3 className="font-semibold">{i.email.subject || "(no subject)"}</h3>
-                  <p className="text-xs text-muted">
-                    {i.email.fromName ? `${i.email.fromName} <${i.email.fromAddress}>` : i.email.fromAddress} · {relative(i.email.receivedAt)} · {fmtDateTime(i.email.receivedAt, tz)}
+              {/* Phones: badges sit under the subject so it gets the full width. */}
+              <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                <div className="min-w-0 flex-1">
+                  <h3 className="font-semibold leading-snug">{i.email.subject || "(no subject)"}</h3>
+                  {/* Always show the real address: look-alike domains are how phishing is spotted. */}
+                  <p className="mt-0.5 break-words text-xs text-muted">
+                    {i.email.fromName ? `${i.email.fromName} <${i.email.fromAddress}>` : i.email.fromAddress} · {relative(i.email.receivedAt)}
                     {i.email.source === "demo" && " · demo email"}
                   </p>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex shrink-0 items-center gap-1.5">
                   <Badge tone={i.category === "urgent" ? "danger" : i.category === "low_priority" ? "neutral" : "accent"}>{CATEGORY_LABEL[i.category]}</Badge>
-                  <Badge title="How confident the classifier is">{Math.round(i.confidence * 100)}% sure</Badge>
+                  <Badge title={`How confident the classifier is. Analysed by ${i.extractor === "mock" ? "the built-in rule engine" : i.extractor}.`}>{Math.round(i.confidence * 100)}% sure</Badge>
                 </div>
               </div>
-              <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-[8rem_1fr]">
-                <dt className="text-muted">Summary</dt>
-                <dd>{i.summary}</dd>
-                <dt className="text-muted">Why it matters</dt>
-                <dd>{i.whyItMatters}</dd>
-                {i.requiredAction && (<><dt className="text-muted">Action</dt><dd>{i.requiredAction}</dd></>)}
-                {i.deadlineCertainty !== "none" && (
-                  <>
-                    <dt className="text-muted">Deadline</dt>
-                    <dd className="flex flex-wrap items-center gap-2">
-                      {i.deadlineAt ? fmtDateTime(i.deadlineAt, tz) : <em>not clear</em>}
-                      {i.deadlineText && <span className="text-xs text-muted">(“{i.deadlineText}”)</span>}
-                      <Badge tone={CERTAINTY[i.deadlineCertainty].tone}>{CERTAINTY[i.deadlineCertainty].label}</Badge>
-                    </dd>
-                  </>
-                )}
-              </dl>
-              <div className="mt-4 flex flex-wrap items-center gap-2">
+
+              <p className="mt-3 text-sm">{i.summary}</p>
+              {i.requiredAction && i.requiredAction !== i.summary && (
+                <p className="mt-1.5 flex gap-1.5 text-sm"><ArrowRightCircle className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden /><span><span className="font-medium">To do:</span> {i.requiredAction}</span></p>
+              )}
+              {i.deadlineCertainty !== "none" && (
+                <div className={clsx("mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg px-3 py-2 text-sm", i.deadlineCertainty === "ambiguous" ? "bg-warn/10" : "bg-surface-2")}>
+                  <CalendarClock className="size-4 shrink-0 text-muted" aria-hidden />
+                  <span className="font-medium">{i.deadlineAt ? `Due ${fmtDateTime(i.deadlineAt, tz)}` : "Deadline not clear"}</span>
+                  {i.deadlineText && <span className="text-xs text-muted">(“{i.deadlineText}”)</span>}
+                  <Badge tone={CERTAINTY[i.deadlineCertainty].tone}>{CERTAINTY[i.deadlineCertainty].label}</Badge>
+                </div>
+              )}
+              <p className="mt-2 text-xs text-muted"><span className="font-medium">Why it matters:</span> {i.whyItMatters}</p>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3">
                 {i.taskId ? (
                   <Link to="/app/tasks"><Badge tone="ok"><CheckCheck className="size-3" /> Task created</Badge></Link>
                 ) : (
@@ -144,14 +144,15 @@ export function InboxPage() {
                 )}
                 {i.status === "new" && <Button size="sm" onClick={() => patch.mutate({ id: i.id, body: { status: "reviewed" } })}><CheckCheck className="size-4" /> Mark reviewed</Button>}
                 {i.status !== "dismissed" && <Button size="sm" variant="ghost" onClick={() => patch.mutate({ id: i.id, body: { status: "dismissed" } })}><X className="size-4" /> Dismiss</Button>}
-                <Select aria-label="Correct category" className="h-8 w-auto text-xs" value={i.category} onChange={(e) => patch.mutate({ id: i.id, body: { userCategory: e.target.value === i.aiCategory ? null : e.target.value } })}>
-                  {(Object.keys(CATEGORY_LABEL) as InsightDTO["category"][]).map((c) => <option key={c} value={c}>{c === i.aiCategory ? `${CATEGORY_LABEL[c]} (AI)` : CATEGORY_LABEL[c]}</option>)}
-                </Select>
-                {i.email.webLink && (
-                  <a href={i.email.webLink} target="_blank" rel="noreferrer noopener" className="ml-auto inline-flex items-center gap-1 text-xs text-accent">Open original <ExternalLink className="size-3" /></a>
-                )}
+                <div className="ml-auto flex items-center gap-2">
+                  <Select aria-label="Correct category" title="Wrong category? Correct it here." className="h-8 w-auto text-xs" value={i.category} onChange={(e) => patch.mutate({ id: i.id, body: { userCategory: e.target.value === i.aiCategory ? null : e.target.value } })}>
+                    {(Object.keys(CATEGORY_LABEL) as InsightDTO["category"][]).map((c) => <option key={c} value={c}>{c === i.aiCategory ? `${CATEGORY_LABEL[c]} (AI)` : CATEGORY_LABEL[c]}</option>)}
+                  </Select>
+                  {i.email.webLink && (
+                    <a href={i.email.webLink} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-xs text-accent">Open <ExternalLink className="size-3" /></a>
+                  )}
+                </div>
               </div>
-              <p className="mt-2 text-[11px] text-muted">Analysed by {i.extractor === "mock" ? "the built-in rule engine" : i.extractor}</p>
             </Card>
           </li>
         ))}

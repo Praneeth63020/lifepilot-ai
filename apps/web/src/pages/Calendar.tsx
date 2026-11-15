@@ -120,9 +120,14 @@ export function CalendarPage() {
         <div className={clsx("grid gap-3", view === "week" ? "md:grid-cols-7" : "grid-cols-1")}>
           {days.map((d) => {
             const cell = byDay.get(d)!;
+            const empty = cell.events.length === 0 && cell.tasks.length === 0 && !(view === "day" && plan.data?.plan?.items.some((i) => !i.isFact));
             return (
-              <Card key={d} className={clsx("min-h-32 !p-3", d === today && "ring-1 ring-accent/50")}>
-                <p className={clsx("mb-2 text-xs font-semibold uppercase tracking-wide", d === today ? "text-accent" : "text-muted")}>{fmtDate(zonedToISO(d, "12:00", tz), tz)}</p>
+              // On phones an empty day is a single compact row instead of a tall empty card.
+              <Card key={d} className={clsx("!p-3 md:min-h-32", view === "day" && "min-h-32", d === today && "ring-1 ring-accent/50")}>
+                <div className="flex items-baseline justify-between gap-2 md:block">
+                  <p className={clsx("text-xs font-semibold uppercase tracking-wide md:mb-2", !empty && "mb-2", d === today ? "text-accent" : "text-muted")}>{fmtDate(zonedToISO(d, "12:00", tz), tz)}</p>
+                  {empty && <span className="text-xs text-muted md:hidden">Free</span>}
+                </div>
                 <ul className="flex flex-col gap-1.5">
                   {cell.events.map((e) => (
                     <li key={e.id}>
@@ -150,7 +155,7 @@ export function CalendarPage() {
                           <span className="block text-muted">{plan.data!.plan!.status === "accepted" ? "Accepted plan block" : "Proposed plan block"} — not on your calendar</span>
                         </li>
                       ))}
-                  {cell.events.length === 0 && cell.tasks.length === 0 && <li className="text-xs text-muted">Free</li>}
+                  {empty && <li className="hidden text-xs text-muted md:block">Free</li>}
                 </ul>
               </Card>
             );

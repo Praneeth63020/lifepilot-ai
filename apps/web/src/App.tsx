@@ -1,5 +1,6 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AppLayout } from "./components/Layout";
 import { Spinner } from "./components/ui";
 const CalendarPage = lazy(() => import("./pages/Calendar").then((m) => ({ default: m.CalendarPage })));
@@ -31,7 +32,9 @@ function GuestOnly({ children }: { children: ReactNode }) {
 }
 
 export function App() {
+  const { pathname } = useLocation();
   return (
+    <ErrorBoundary resetKey={pathname}>
     <Suspense fallback={<div className="p-8"><Spinner /></div>}>
     <Routes>
       <Route path="/" element={<LandingPage />} />
@@ -56,5 +59,6 @@ export function App() {
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
     </Suspense>
+    </ErrorBoundary>
   );
 }

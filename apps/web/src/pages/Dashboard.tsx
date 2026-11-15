@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowRight, CalendarDays, Circle, Inbox, Lightbulb, Plus, RefreshCw, Sparkles } from "lucide-react";
+import clsx from "clsx";
+import { AlertCircle, AlertTriangle, ArrowRight, CalendarDays, CalendarX, ChevronRight, Circle, HelpCircle, Inbox, Lightbulb, Plus, RefreshCw, ShieldAlert, Sparkles, Timer, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import type { ConnectionDTO, DashboardDTO } from "@lifepilot/shared";
+import type { ConnectionDTO, DashboardDTO, RecommendationDTO } from "@lifepilot/shared";
 import { api, errorMessage } from "../api";
 import { PlanTimeline } from "../components/PlanTimeline";
 import { useToast } from "../components/toast";
@@ -38,6 +39,17 @@ export function SyncStatus({ connections }: { connections: ConnectionDTO[] }) {
     </div>
   );
 }
+
+
+/** Where each suggestion can be acted on, and how it looks. */
+const RECOMMENDATION_META: Record<RecommendationDTO["kind"], { icon: LucideIcon; tone: string; to: string }> = {
+  overdue: { icon: AlertCircle, tone: "text-danger", to: "/app/tasks" },
+  conflict: { icon: CalendarX, tone: "text-danger", to: "/app/calendar" },
+  unclear_deadline: { icon: HelpCircle, tone: "text-warn", to: "/app/inbox" },
+  suspicious_email: { icon: ShieldAlert, tone: "text-danger", to: "/app/inbox" },
+  no_estimate: { icon: Timer, tone: "text-muted", to: "/app/tasks" },
+  not_planned: { icon: Sparkles, tone: "text-accent", to: "/app/planner" },
+};
 
 export function DashboardPage() {
   const { me } = useSession();
@@ -197,8 +209,20 @@ export function DashboardPage() {
         <div className="flex flex-col gap-5">
           {d.recommendations.length > 0 && (
             <Card title={<span className="flex items-center gap-1.5"><Lightbulb className="size-4 text-accent" /> Suggestions</span>}>
-              <ul className="flex flex-col gap-2 text-sm">
-                {d.recommendations.map((r) => <li key={r}>{r}</li>)}
+              <ul className="flex flex-col gap-1">
+                {d.recommendations.map((r) => {
+                  const meta = RECOMMENDATION_META[r.kind];
+                  const Icon = meta.icon;
+                  return (
+                    <li key={r.kind}>
+                      <Link to={meta.to} className="group -mx-2 flex gap-2.5 rounded-lg px-2 py-1.5 text-sm hover:bg-surface-2">
+                        <Icon className={clsx("mt-0.5 size-4 shrink-0", meta.tone)} aria-hidden />
+                        <span className="flex-1">{r.text}</span>
+                        <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted opacity-0 transition-opacity group-hover:opacity-100" aria-hidden />
+                      </Link>
+                    </li>
+                  );
+                })}
               </ul>
               {d.plan && (
                 <Button className="mt-3" size="sm" loading={replan.isPending} onClick={() => replan.mutate()}>
