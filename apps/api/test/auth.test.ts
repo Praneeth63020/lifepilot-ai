@@ -7,6 +7,10 @@ import { closeDb, FIXED_NOW, makeCtx, resetDb, signUp } from "./helpers.js";
 afterAll(closeDb);
 beforeEach(resetDb);
 
+const DAY = 24 * 3600_000;
+const sessionCookies = (header: string | string[] | undefined) =>
+  (Array.isArray(header) ? header : header ? [header] : []).filter((cookie) => cookie.startsWith("lp_session="));
+
 describe("authentication", () => {
   it("registers, keeps a session, logs out", async () => {
     const { app } = makeCtx();
@@ -156,6 +160,54 @@ describe("authentication", () => {
     );
 
     expect(unchangedSession?.expiresAt.getTime()).toBe(expiredAt.getTime());
+  });
+
+  it("never extends a session past 90 days after sign-in", async () => {
+    const { app, ctx } = makeCtx();
+    const { agent, user } = await signUp(app, "capped@example.com");
+    const createdAt = new Date(FIXED_NOW.getTime() - 89 * DAY);
+
+    await ctx.db
+      .update(sessions)
+      .set({ createdAt, lastSeenAt: new Date(FIXED_NOW.getTime() - 6 * 60_000), expiresAt: new Date(FIXED_NOW.getTime() + 12 * 3600_000) })
+      .where(eq(sessions.userId, user.id));
+
+    const response = await agent.get("/api/v1/auth/me").expect(200);
+    const renewedCookie = sessionCookies(response.headers["set-cookie"])[0];
+
+    // One day left until the 90-day cap, not a fresh 30 days.
+    expect(renewedCookie).toMatch(/Max-Age=86400;/);
+    const updated = await ctx.db.query.sessions.findFirst({ where: eq(sessions.userId, user.id) });
+    expect(updated?.expiresAt.getTime()).toBe(createdAt.getTime() + 90 * DAY);
+  });
+
+  it("rejects a session older than 90 days even if it was extended before", async () => {
+    const { app, ctx } = makeCtx();
+    const { agent, user } = await signUp(app, "too-old@example.com");
+
+    await ctx.db
+      .update(sessions)
+      .set({ createdAt: new Date(FIXED_NOW.getTime() - 90 * DAY - 60_000), expiresAt: new Date(FIXED_NOW.getTime() + 10 * DAY) })
+      .where(eq(sessions.userId, user.id));
+
+    await agent.get("/api/v1/auth/me").expect(401);
+  });
+
+  it("clears the cookie on logout even when the same request renews the session", async () => {
+    const { app, ctx } = makeCtx();
+    const { agent, user } = await signUp(app, "idle-logout@example.com");
+
+    await ctx.db
+      .update(sessions)
+      .set({ lastSeenAt: new Date(FIXED_NOW.getTime() - 6 * 60_000) })
+      .where(eq(sessions.userId, user.id));
+
+    const response = await agent.post("/api/v1/auth/logout").expect(204);
+    const cookies = sessionCookies(response.headers["set-cookie"]);
+
+    // Browsers apply Set-Cookie headers in order, so the clearing one must come last.
+    expect(cookies.at(-1)).toMatch(/^lp_session=;.*Expires=Thu, 01 Jan 1970/);
+    await agent.get("/api/v1/auth/me").expect(401);
   });
 
   it("rejects duplicate emails, weak passwords and bad credentials", async () => {

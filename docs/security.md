@@ -4,7 +4,7 @@
 
 **Passwords and sessions**
 - Passwords are hashed with argon2id (19 MiB, t=2). Login timing is equalised for unknown emails.
-- Sessions are opaque 256-bit tokens. Only their SHA-256 is stored. The cookie is httpOnly, SameSite=Lax, and Secure in production; sessions last 30 days with sliding expiry.
+- Sessions are opaque 256-bit tokens. Only their SHA-256 is stored. The cookie is httpOnly, SameSite=Lax, and Secure in production; sessions expire after 30 days of inactivity (the database row and the cookie are renewed together on activity) and never last more than 90 days after sign-in.
 - A password reset revokes all sessions.
 
 **Request protection**
