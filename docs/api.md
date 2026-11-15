@@ -22,12 +22,12 @@ These endpoints are rate limited to 20 requests per 15 minutes.
 
 | Method | Path | Body | Result |
 |---|---|---|---|
-| POST | `/register` | `{email, password(≥10), name, timezone?}` | 201 `{user, preferences}` and sets the cookie; 409 `email_taken` |
+| POST | `/register` | `{email, password(≥10), name, timezone?}` | 201 `{user, preferences, verificationSent}` and sets the cookie; 409 `email_taken` (also for simultaneous sign-ups) |
 | POST | `/login` | `{email, password}` | `{user, preferences}`; 401 `invalid_credentials` |
 | POST | `/logout` | – | 204 |
 | GET | `/me` | – | `{user, preferences}`; 401 |
 | POST | `/verify-email` | `{token}` | single-use, 48 h |
-| POST | `/resend-verification` | – | |
+| POST | `/resend-verification` | – | 502 `email_failed` if the email couldn't be sent |
 | POST | `/request-password-reset` | `{email}` | always 200 |
 | POST | `/reset-password` | `{token, password}` | single-use, 1 h; signs out all sessions |
 | GET | `/sessions` | – | active sessions |
@@ -51,8 +51,8 @@ These endpoints are rate limited to 20 requests per 15 minutes.
 | POST | `/tasks/:id/reopen` | |
 | POST | `/tasks/:id/subtasks` | `{title}` |
 | PATCH/DELETE | `/subtasks/:id` | `{title?, done?}` |
-| GET/POST | `/projects` | List includes `openTasks` per project. Colour is a hex value like `#4f46e5`. |
-| PATCH/DELETE | `/projects/:id` | Rename or recolour; deleting keeps the tasks and clears their project. |
+| GET/POST | `/projects` | Each project includes `openTasks`, `doneTasks`, `overdueTasks`, `nextDue {taskId,title,dueAt}` and `lastDueAt`. Colour is a hex value like `#4f46e5`. Names are unique per user (case-insensitive): 409 `project_exists`. |
+| GET/PATCH/DELETE | `/projects/:id` | Read, rename or recolour; deleting keeps the tasks and clears their project. |
 
 ## Calendar (`/calendar`)
 
@@ -89,12 +89,12 @@ These endpoints are rate limited to 20 requests per 15 minutes.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/plans/current?date=YYYY-MM-DD` | Accepted plan, else the latest proposal, else `null` |
+| GET | `/plans/current?date=YYYY-MM-DD` | Accepted plan, else the latest proposal, else `null`. `drift[]` lists what no longer fits (new overlapping meetings, tasks due today not in the plan); the plan itself is never changed. |
 | POST | `/plans/generate` | `{date?}`. Returns a new proposal; earlier proposals are superseded. |
 | POST | `/plans/replan` | Today, from the current time. Includes `changes[]`. |
 | POST | `/plans/:id/accept`, `/plans/:id/reject` | |
 | PATCH | `/plans/:id/items` | `{items:[{id,startAt,endAt}]}`. Suggested blocks only; can't overlap events. |
-| GET | `/dashboard` | Everything for the home screen |
+| GET | `/dashboard` | Everything for the home screen. `recommendations[]` are `{kind, text}` with kind `overdue`, `conflict`, `unclear_deadline`, `suspicious_email`, `no_estimate`, `not_planned` or `plan_outdated`. |
 | GET | `/dashboard/week` | 7-day summary |
 
 ## Reminders & notifications
