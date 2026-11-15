@@ -56,6 +56,45 @@ describe("tasks and reminders", () => {
     expect(done.body.next.subtasks).toHaveLength(2);
   });
 
+  it("PATCH only changes the fields it sends", async () => {
+    const { app } = makeCtx();
+    const { agent } = await signUp(app);
+    const t = (
+      await agent
+        .post("/api/v1/tasks")
+        .send({ title: "Gym", priority: "urgent", tags: ["health"], recurrence: "daily", dueAt: IST("2026-11-02T19:00:00") })
+        .expect(201)
+    ).body;
+    const renamed = (await agent.patch(`/api/v1/tasks/${t.id}`).send({ title: "Gym session" }).expect(200)).body;
+    expect(renamed).toMatchObject({ title: "Gym session", priority: "urgent", tags: ["health"], recurrence: "daily" });
+    // What the "Postpone" button sends.
+    const postponed = (await agent.patch(`/api/v1/tasks/${t.id}`).send({ snoozedUntil: IST("2026-11-03T00:00:00") }).expect(200)).body;
+    expect(postponed).toMatchObject({ priority: "urgent", tags: ["health"], recurrence: "daily" });
+  });
+
+  it("does not duplicate the next occurrence when a recurring task is completed, reopened and completed again", async () => {
+    const { app } = makeCtx();
+    const { agent } = await signUp(app);
+    const t = (await agent.post("/api/v1/tasks").send({ title: "Stretch", dueAt: IST("2026-11-02T19:00:00"), recurrence: "daily" }).expect(201)).body;
+    const first = (await agent.post(`/api/v1/tasks/${t.id}/complete`).expect(200)).body;
+    await agent.post(`/api/v1/tasks/${t.id}/reopen`).expect(200);
+    const second = (await agent.post(`/api/v1/tasks/${t.id}/complete`).expect(200)).body;
+    expect(second.next.id).toBe(first.next.id);
+    const open = (await agent.get("/api/v1/tasks").query({ q: "Stretch" }).expect(200)).body.items;
+    expect(open).toHaveLength(1);
+  });
+
+  it("rejects dependency cycles of any length", async () => {
+    const { app } = makeCtx();
+    const { agent } = await signUp(app);
+    const a = (await agent.post("/api/v1/tasks").send({ title: "A" }).expect(201)).body;
+    const b = (await agent.post("/api/v1/tasks").send({ title: "B", dependsOnTaskId: a.id }).expect(201)).body;
+    const c = (await agent.post("/api/v1/tasks").send({ title: "C", dependsOnTaskId: b.id }).expect(201)).body;
+    // A → C → B → A
+    const res = await agent.patch(`/api/v1/tasks/${a.id}`).send({ dependsOnTaskId: c.id }).expect(400);
+    expect(res.body.error.message).toBe("Circular dependency");
+  });
+
   it("validates input", async () => {
     const { app } = makeCtx();
     const { agent } = await signUp(app);
@@ -101,5 +140,23 @@ describe("daily planner API", () => {
     expect(re.changes.some((c: { change: string }) => c.change === "moved")).toBe(true);
     // The accepted plan remains until the user accepts the new proposal.
     expect((await agent.get("/api/v1/plans/current")).body.plan.id).toBe(gen.id);
+  });
+});
+
+describe("calendar alternatives", () => {
+  it("avoids other events on the target's day even when it is more than a few days away", async () => {
+    const { app } = makeCtx(); // now = 2026-11-02 09:00 IST
+    const { agent } = await signUp(app);
+    const target = (await agent.post("/api/v1/calendar/events").send({ title: "Review", startAt: IST("2026-11-12T10:00:00"), endAt: IST("2026-11-12T11:00:00") }).expect(201)).body;
+    const blockers = [
+      { start: IST("2026-11-12T09:00:00"), end: IST("2026-11-12T10:00:00") },
+      { start: IST("2026-11-12T11:00:00"), end: IST("2026-11-12T18:00:00") },
+    ];
+    for (const b of blockers) await agent.post("/api/v1/calendar/events").send({ title: "Busy", startAt: b.start, endAt: b.end }).expect(201);
+    const res = (await agent.get(`/api/v1/calendar/events/${target.id}/alternatives`).expect(200)).body;
+    expect(res.suggestions.length).toBeGreaterThan(0);
+    for (const s of res.suggestions as { startAt: string; endAt: string }[]) {
+      for (const b of blockers) expect(s.startAt < b.end && b.start < s.endAt).toBe(false);
+    }
   });
 });
