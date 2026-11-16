@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertTriangle, ArrowRight, CalendarClock, FolderKanban, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, CalendarClock, CheckCircle2, FolderKanban, ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { ProjectDTO } from "@lifepilot/shared";
 import { api, errorMessage } from "../api";
 import { useToast } from "../components/toast";
-import { Button, Card, Empty, ErrorNote, Field, Input, Menu, Modal, PageHeader, Spinner, buttonClass } from "../components/ui";
+import { Button, Card, Empty, ErrorNote, Field, Input, Menu, Modal, PageHeader, Spinner, buttonClass, StatCard } from "../components/ui";
 import { fmtDate, fmtDateTime } from "../lib/format";
 import { useTz } from "../session";
 
@@ -171,13 +171,22 @@ export function ProjectsPage() {
         </Card>
       )}
       {items.length > 0 && (
-        <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <>
+        {/* Totals across all projects, from the same per-project figures. */}
+        <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <StatCard label="Projects" value={items.length} icon={<FolderKanban />} tone="accent" />
+          <StatCard label="Open tasks" value={items.reduce((n, p) => n + p.openTasks, 0)} icon={<ListChecks />} tone="blue" />
+          <StatCard label="Overdue" value={items.reduce((n, p) => n + p.overdueTasks, 0)} icon={<AlertTriangle />} tone={items.some((p) => p.overdueTasks) ? "danger" : "neutral"} />
+          <StatCard label="Completed" value={items.reduce((n, p) => n + p.doneTasks, 0)} icon={<CheckCircle2 />} tone="ok" />
+        </div>
+        <ul className="grid gap-5 md:grid-cols-2 2xl:grid-cols-3">
           {items.map((p) => (
             <li key={p.id}>
-              <Card className="flex h-full flex-col gap-4">
+              <Card className="relative flex h-full flex-col gap-4 overflow-hidden pt-6">
+                <span aria-hidden className="absolute inset-x-0 top-0 h-1.5" style={{ background: p.color ?? "var(--lp-accent)" }} />
                 <div className="flex items-start gap-2">
-                  <ProjectDot color={p.color} className="mt-1.5 size-2.5" />
-                  <Link to={`/app/tasks?project=${p.id}`} className="min-w-0 flex-1 break-words font-semibold hover:text-accent">
+                  <ProjectDot color={p.color} className="mt-2 size-2.5" />
+                  <Link to={`/app/tasks?project=${p.id}`} className="min-w-0 flex-1 break-words font-display text-lg font-semibold hover:text-accent-strong">
                     {p.name}
                   </Link>
                   <Menu
@@ -189,6 +198,14 @@ export function ProjectsPage() {
                   />
                 </div>
                 <ProjectProgress project={p} />
+                <dl className="grid grid-cols-3 gap-2 text-center">
+                  {[["Open", p.openTasks, ""], ["Done", p.doneTasks, "text-ok"], ["Overdue", p.overdueTasks, p.overdueTasks ? "text-danger" : ""]].map(([label, n, cls]) => (
+                    <div key={label as string} className="rounded-xl bg-surface-2 py-2">
+                      <dt className="text-[11px] font-medium uppercase tracking-wide text-muted">{label}</dt>
+                      <dd className={clsx("font-display text-xl font-semibold", cls as string)}>{n}</dd>
+                    </div>
+                  ))}
+                </dl>
                 <ProjectDeadlines project={p} tz={tz} />
                 <div className="mt-auto flex items-center justify-between border-t border-line pt-3 text-xs text-muted">
                   <span>{p.openTasks} open</span>
@@ -200,6 +217,7 @@ export function ProjectsPage() {
             </li>
           ))}
         </ul>
+        </>
       )}
       {editing && <ProjectFormModal project={editing === "new" ? null : editing} onClose={() => setEditing(null)} />}
     </div>

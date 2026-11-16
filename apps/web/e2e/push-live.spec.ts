@@ -29,6 +29,7 @@ test("live web push in desktop Chrome", async () => {
   await page.fill("#name", "Push Tester");
   await page.fill("#email", `push-${Date.now()}@example.com`);
   await page.fill("#password", "push-password-123");
+  await page.check("#terms");
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/onboarding/);
   await page.getByRole("button", { name: "Continue" }).click();

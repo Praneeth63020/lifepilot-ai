@@ -1,15 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { AlertTriangle, ChevronLeft, ChevronRight, ExternalLink, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import type { CalendarEventDTO, ConflictDTO, DailyPlanDTO, TaskDTO } from "@lifepilot/shared";
 import { api, errorMessage } from "../api";
+import { CalendarMonth } from "../components/CalendarMonth";
+import { CalendarUpcoming } from "../components/CalendarUpcoming";
+import { TimeGrid, TimeGridLegend, type TimeGridItem } from "../components/TimeGrid";
 import { useToast } from "../components/toast";
-import { Badge, Button, Card, ErrorNote, Field, Input, Modal, PageHeader, Select, Spinner, Textarea, Toggle } from "../components/ui";
-import { addDaysISO, fmtDate, fmtDateTime, fmtTime, localISODate, zonedToISO } from "../lib/format";
-import { useTz } from "../session";
+import { Badge, Button, ErrorNote, Field, Input, Modal, PageHeader, Select, Spinner, Textarea, Toggle, cardClass, useTabs } from "../components/ui";
+import { addDaysISO, fmtDate, fmtDateTime, fmtTime, localISODate, minutesLabel, zonedToISO } from "../lib/format";
+import { useSession, useTz } from "../session";
 
 type View = "day" | "week" | "month";
+const VIEWS: readonly View[] = ["day", "week", "month"];
 
 function weekday(date: string) {
   return new Date(`${date}T12:00:00Z`).getUTCDay(); // 0 = Sunday
@@ -32,10 +37,24 @@ function sourceBadge(e: CalendarEventDTO) {
   return <Badge tone="accent" title="Created in LifePilot">Local</Badge>;
 }
 
+function useNow() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  return now;
+}
+
 export function CalendarPage() {
   const tz = useTz();
-  const today = localISODate(new Date(), tz);
+  const { me } = useSession();
+  const prefs = me?.preferences;
+  const navigate = useNavigate();
+  const now = useNow();
+  const today = localISODate(now, tz);
   const [view, setView] = useState<View>("week");
+  const viewTabs = useTabs("calendar-view", VIEWS, view, setView);
   const [anchor, setAnchor] = useState(today);
   const [selected, setSelected] = useState<CalendarEventDTO | null>(null);
   const [creating, setCreating] = useState(false);
@@ -48,6 +67,7 @@ export function CalendarPage() {
   const tasks = useQuery({ queryKey: ["tasks", "due-range", to], queryFn: () => api.get<{ items: TaskDTO[] }>("/tasks", { status: "open", dueBefore: to, limit: 200 }) });
   const plan = useQuery({ queryKey: ["plan", anchor], queryFn: () => api.get<{ plan: DailyPlanDTO | null }>("/plans/current", { date: anchor }), enabled: view === "day" });
 
+  const conflictList = conflicts.data?.items ?? [];
   const conflictIds = useMemo(() => new Set((conflicts.data?.items ?? []).flatMap((c) => [c.a.id, c.b.id])), [conflicts.data]);
   const byDay = useMemo(() => {
     const m = new Map<string, { events: CalendarEventDTO[]; tasks: TaskDTO[] }>();
@@ -62,7 +82,44 @@ export function CalendarPage() {
     }
     for (const t of tasks.data?.items ?? []) if (t.dueAt) m.get(localISODate(new Date(t.dueAt), tz))?.tasks.push(t);
     return m;
-  }, [events.data, tasks.data, days, tz]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events.data, tasks.data, days.join(), tz]);
+
+  const activePlan = view === "day" && plan.data?.plan && (plan.data.plan.status === "proposed" || plan.data.plan.status === "accepted") ? plan.data.plan : null;
+
+  const gridItems = useMemo<TimeGridItem[]>(() => {
+    if (view === "month") return [];
+    const out: TimeGridItem[] = (events.data?.items ?? []).map((e) => ({
+      id: e.id,
+      title: e.title,
+      startAt: e.startAt,
+      endAt: e.endAt,
+      allDay: e.allDay,
+      kind: "event",
+      conflict: conflictIds.has(e.id),
+      detail: [e.needsPrep ? `prep ${e.prepMin} min` : null, e.location].filter(Boolean).join(" · ") || undefined,
+      onSelect: () => setSelected(e),
+    }));
+    for (const t of tasks.data?.items ?? []) {
+      if (!t.dueAt) continue;
+      out.push({ id: `due-${t.id}`, title: t.title, startAt: t.dueAt, endAt: t.dueAt, kind: "due", day: localISODate(new Date(t.dueAt), tz), timeLabel: `Due ${fmtTime(t.dueAt, tz)}` });
+    }
+    for (const i of activePlan?.items ?? []) {
+      if (i.isFact) continue; // events are already on the grid
+      out.push({
+        id: `plan-${i.id}`,
+        title: i.title,
+        startAt: i.startAt,
+        endAt: i.endAt,
+        kind: i.kind === "event" ? "task" : i.kind,
+        proposed: activePlan!.status !== "accepted",
+        detail: activePlan!.status === "accepted" ? "accepted plan" : "proposed plan",
+        kindLabel: `${i.kind === "task" ? "Planned focus block" : i.kind === "prep" ? "Planned preparation" : "Planned break"} (not on your calendar)`,
+        onSelect: () => navigate(`/app/planner?date=${activePlan!.date}`),
+      });
+    }
+    return out;
+  }, [view, events.data, tasks.data, activePlan, conflictIds, tz, navigate]);
 
   const step = (dir: number) => {
     if (view === "day") setAnchor(addDaysISO(anchor, dir));
@@ -79,109 +136,126 @@ export function CalendarPage() {
       : view === "week"
         ? `${fmtDate(zonedToISO(days[0]!, "12:00", tz), tz, { month: "short", day: "numeric" })} – ${fmtDate(zonedToISO(days[6]!, "12:00", tz), tz, { month: "short", day: "numeric", year: "numeric" })}`
         : fmtDate(zonedToISO(anchor, "12:00", tz), tz, { weekday: "long", month: "long", day: "numeric" });
+  const inRange = days.includes(today);
+
+  // Range summary from loaded data only.
+  const rangeEvents = (events.data?.items ?? []).filter((e) => !e.allDay);
+  const busyMin = rangeEvents.reduce((s, e) => s + Math.max(0, Math.round((Math.min(new Date(e.endAt).getTime(), new Date(to).getTime()) - Math.max(new Date(e.startAt).getTime(), new Date(from).getTime())) / 60000)), 0);
+  const dueCount = [...byDay.values()].reduce((s, c) => s + c.tasks.length, 0);
+  const prepCount = (events.data?.items ?? []).filter((e) => e.needsPrep).length;
 
   return (
-    <div>
-      <PageHeader title="Calendar" subtitle="Imported events are read-only. LifePilot suggests changes; it never edits your Google Calendar." actions={<Button variant="primary" onClick={() => setCreating(true)}><Plus className="size-4" /> New event</Button>} />
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1">
-          <Button size="sm" variant="ghost" aria-label="Previous" onClick={() => step(-1)}><ChevronLeft className="size-4" /></Button>
-          <Button size="sm" variant="ghost" aria-label="Next" onClick={() => step(1)}><ChevronRight className="size-4" /></Button>
-          <Button size="sm" variant="ghost" onClick={() => setAnchor(today)}>Today</Button>
-          <h2 className="ml-2 text-base font-semibold">{title}</h2>
-        </div>
-        <div role="tablist" aria-label="View" className="flex rounded-lg border border-line p-0.5">
-          {(["day", "week", "month"] as View[]).map((v) => (
-            <button key={v} role="tab" aria-selected={view === v} onClick={() => setView(v)} className={clsx("rounded-md px-3 py-1 text-sm capitalize", view === v ? "bg-accent-soft text-accent" : "text-muted hover:text-ink")}>
-              {v}
-            </button>
-          ))}
-        </div>
-      </div>
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        eyebrow="Calendar"
+        title={title}
+        subtitle="Imported events are read-only. LifePilot suggests changes; it never edits your Google Calendar."
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center rounded-xl border border-line bg-surface p-0.5 shadow-card">
+              <Button size="sm" variant="ghost" aria-label="Previous" onClick={() => step(-1)}><ChevronLeft className="size-4" /></Button>
+              <Button size="sm" variant="ghost" onClick={() => setAnchor(today)} disabled={inRange && (view !== "day" || anchor === today)} className="disabled:opacity-60">Today</Button>
+              <Button size="sm" variant="ghost" aria-label="Next" onClick={() => step(1)}><ChevronRight className="size-4" /></Button>
+            </div>
+            <div role="tablist" aria-label="View" className="flex rounded-xl border border-line bg-surface p-0.5 shadow-card">
+              {VIEWS.map((v) => (
+                <button key={v} {...viewTabs.tabProps(v)} className={clsx("h-8 rounded-[10px] px-3 text-sm font-medium capitalize transition-colors", view === v ? "bg-ink text-canvas" : "text-muted hover:bg-surface-2 hover:text-ink")}>
+                  {v}
+                </button>
+              ))}
+            </div>
+            <Button variant="primary" onClick={() => setCreating(true)}><Plus className="size-4" /> New event</Button>
+          </div>
+        }
+      />
 
-      {(conflicts.data?.items.length ?? 0) > 0 && (
-        <div className="mb-4 rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm">
-          <p className="flex items-center gap-1.5 font-medium text-danger"><AlertTriangle className="size-4" /> {conflicts.data!.items.length} conflict{conflicts.data!.items.length > 1 ? "s" : ""} in this range</p>
-          <ul className="mt-1 text-muted">
-            {conflicts.data!.items.map((c) => (
-              <li key={c.a.id + c.b.id}>
-                "{c.a.title}" overlaps "{c.b.title}" by {c.overlapMinutes} min ({fmtDateTime(c.overlapStart, tz)}) —{" "}
-                <button className="text-accent underline-offset-2 hover:underline" onClick={() => setSelected((events.data?.items ?? []).find((e) => e.id === c.b.id) ?? null)}>suggest new times</button>
+      {conflictList.length > 0 && (
+        <div className="rounded-[var(--radius-card)] border border-danger/30 bg-danger/[0.06] p-4 text-sm">
+          <p className="flex items-center gap-2 font-semibold text-danger">
+            <AlertTriangle className="size-4" aria-hidden /> {conflictList.length} conflict{conflictList.length > 1 ? "s" : ""} in this range
+          </p>
+          <ul className="mt-2 grid gap-2 lg:grid-cols-2">
+            {conflictList.map((c) => (
+              <li key={c.a.id + c.b.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl border border-danger/20 bg-surface px-3 py-2">
+                <span className="min-w-0 text-ink">
+                  <span className="font-medium">"{c.a.title}"</span> overlaps <span className="font-medium">"{c.b.title}"</span>
+                  <span className="block text-xs text-muted">by {c.overlapMinutes} min · {fmtDateTime(c.overlapStart, tz)}</span>
+                </span>
+                <button className="shrink-0 rounded-lg px-2 py-1 text-sm font-medium text-accent-strong underline-offset-2 hover:bg-accent-soft hover:underline" onClick={() => setSelected((events.data?.items ?? []).find((e) => e.id === c.b.id) ?? null)}>
+                  suggest new times
+                </button>
               </li>
             ))}
           </ul>
         </div>
       )}
 
-      {events.isLoading && <Spinner label="Loading events" />}
-      {events.error && <ErrorNote error={events.error} onRetry={() => events.refetch()} />}
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
+        <section {...viewTabs.panelProps} className={clsx(cardClass, "min-w-0 overflow-hidden")}>
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line px-4 py-3 sm:px-5">
+            <p className="text-sm text-muted">
+              {events.data ? (
+                <>
+                  <span className="font-medium text-ink">{events.data.items.length}</span> event{events.data.items.length === 1 ? "" : "s"}
+                  {busyMin > 0 && <> · {minutesLabel(busyMin)} booked</>}
+                  {dueCount > 0 && <> · <span className="font-medium text-ink">{dueCount}</span> task{dueCount === 1 ? "" : "s"} due</>}
+                  {prepCount > 0 && <> · {prepCount} need{prepCount === 1 ? "s" : ""} prep</>}
+                  {conflictList.length > 0 && <> · <span className="font-medium text-danger">{conflictList.length} conflict{conflictList.length === 1 ? "" : "s"}</span></>}
+                </>
+              ) : (
+                " "
+              )}
+            </p>
+            {view !== "month" && <TimeGridLegend kinds={activePlan ? ["event", "task", "prep", "break", "due"] : ["event", "due"]} proposed={activePlan?.status === "proposed"} conflict={conflictList.length > 0} />}
+          </div>
 
-      {events.data && view !== "month" && (
-        <div className={clsx("grid gap-3", view === "week" ? "md:grid-cols-7" : "grid-cols-1")}>
-          {days.map((d) => {
-            const cell = byDay.get(d)!;
-            const empty = cell.events.length === 0 && cell.tasks.length === 0 && !(view === "day" && plan.data?.plan?.items.some((i) => !i.isFact));
-            return (
-              // On phones an empty day is a single compact row instead of a tall empty card.
-              <Card key={d} className={clsx("!p-3 md:min-h-32", view === "day" && "min-h-32", d === today && "ring-1 ring-accent/50")}>
-                <div className="flex items-baseline justify-between gap-2 md:block">
-                  <p className={clsx("text-xs font-semibold uppercase tracking-wide md:mb-2", !empty && "mb-2", d === today ? "text-accent" : "text-muted")}>{fmtDate(zonedToISO(d, "12:00", tz), tz)}</p>
-                  {empty && <span className="text-xs text-muted md:hidden">Free</span>}
-                </div>
-                <ul className="flex flex-col gap-1.5">
-                  {cell.events.map((e) => (
-                    <li key={e.id}>
-                      <button onClick={() => setSelected(e)} className={clsx("w-full rounded-lg border px-2 py-1.5 text-left text-xs hover:bg-surface-2", conflictIds.has(e.id) ? "border-danger/50" : "border-line")}>
-                        <span className="block font-medium text-ink">{e.title}</span>
-                        <span className="flex flex-wrap items-center gap-1 text-muted">
-                          {e.allDay ? "All day" : `${fmtTime(e.startAt, tz)}–${fmtTime(e.endAt, tz)}`} {sourceBadge(e)}
-                          {conflictIds.has(e.id) && <Badge tone="danger">conflict</Badge>}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                  {cell.tasks.map((t) => (
-                    <li key={t.id} className="rounded-lg bg-accent-soft px-2 py-1 text-xs">
-                      <span className="font-medium text-accent">Task due {fmtTime(t.dueAt!, tz)}</span>
-                      <span className="block text-ink">{t.title}</span>
-                    </li>
-                  ))}
-                  {view === "day" &&
-                    plan.data?.plan?.items
-                      .filter((i) => !i.isFact)
-                      .map((i) => (
-                        <li key={i.id} className="rounded-lg border border-dashed border-accent/50 px-2 py-1 text-xs">
-                          <span className="font-medium">{fmtTime(i.startAt, tz)} · {i.title}</span>
-                          <span className="block text-muted">{plan.data!.plan!.status === "accepted" ? "Accepted plan block" : "Proposed plan block"} — not on your calendar</span>
-                        </li>
-                      ))}
-                  {empty && <li className="hidden text-xs text-muted md:block">Free</li>}
-                </ul>
-              </Card>
-            );
-          })}
-        </div>
-      )}
+          {events.isLoading && <div className="px-5"><Spinner label="Loading events" /></div>}
+          {events.error && <div className="p-4"><ErrorNote error={events.error} onRetry={() => events.refetch()} /></div>}
 
-      {events.data && view === "month" && (
-        <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-line bg-line text-xs">
-          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((w) => <div key={w} className="bg-surface-2 px-2 py-1 font-medium text-muted">{w}</div>)}
-          {days.map((d) => {
-            const cell = byDay.get(d)!;
-            const inMonth = d.slice(0, 7) === anchor.slice(0, 7);
-            return (
-              <button key={d} onClick={() => { setAnchor(d); setView("day"); }} className={clsx("min-h-20 bg-surface p-1.5 text-left hover:bg-surface-2", !inMonth && "opacity-40")}>
-                <span className={clsx("font-medium", d === today && "rounded bg-accent px-1 text-accent-ink")}>{Number(d.slice(8))}</span>
-                <ul className="mt-1 flex flex-col gap-0.5">
-                  {cell.events.slice(0, 3).map((e) => <li key={e.id} className={clsx("truncate", conflictIds.has(e.id) && "text-danger")}>{e.allDay ? "" : fmtTime(e.startAt, tz) + " "}{e.title}</li>)}
-                  {cell.events.length > 3 && <li className="text-muted">+{cell.events.length - 3} more</li>}
-                  {cell.tasks.length > 0 && <li className="text-accent">{cell.tasks.length} due</li>}
-                </ul>
-              </button>
-            );
-          })}
-        </div>
-      )}
+          {events.data && view !== "month" && (
+            <div className="px-2 pb-3 pt-1 sm:px-3">
+              {view === "day" && activePlan && (
+                <p className="px-2 pb-2 pt-1 text-xs text-muted">
+                  {activePlan.status === "accepted" ? "Your accepted plan" : "A proposed plan"} for this day is shown alongside your events — plan blocks aren't on your calendar.{" "}
+                  <button type="button" className="font-medium text-accent-strong hover:underline" onClick={() => navigate(`/app/planner?date=${activePlan.date}`)}>Open in planner</button>
+                </p>
+              )}
+              <TimeGrid
+                days={days}
+                tz={tz}
+                today={today}
+                now={now}
+                items={gridItems}
+                startMin={prefs?.workStartMin ?? 7 * 60}
+                endMin={prefs?.workEndMin ?? 21 * 60}
+                workStartMin={prefs?.workStartMin}
+                workEndMin={prefs?.workEndMin}
+                hourHeight={view === "day" ? 64 : 56}
+                minColumnWidth={view === "week" ? 88 : 0}
+                onDayClick={view === "week" ? (d) => { setAnchor(d); setView("day"); } : undefined}
+                emptyLabel="No events — free day"
+              />
+            </div>
+          )}
+
+          {events.data && view === "month" && (
+            <CalendarMonth
+              days={days}
+              anchor={anchor}
+              today={today}
+              tz={tz}
+              byDay={byDay}
+              conflictIds={conflictIds}
+              onOpenDay={(d) => { setAnchor(d); setView("day"); }}
+              onSelectEvent={setSelected}
+            />
+          )}
+        </section>
+
+        <aside aria-label="Upcoming events and tasks" className="min-w-0">
+          <CalendarUpcoming tz={tz} today={today} now={now} onSelect={setSelected} />
+        </aside>
+      </div>
 
       {selected && <EventModal key={selected.id} event={selected} tz={tz} onClose={() => setSelected(null)} />}
       {creating && <NewEventModal tz={tz} defaultDate={anchor} onClose={() => setCreating(false)} />}
@@ -216,7 +290,7 @@ function EventModal({ event, tz, onClose }: { event: CalendarEventDTO; tz: strin
         </p>
         {event.location && <p className="text-muted">{event.location}</p>}
         {event.description && <p className="whitespace-pre-line text-muted">{event.description}</p>}
-        {event.htmlLink && <a href={event.htmlLink} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-accent">Open in Google Calendar <ExternalLink className="size-3.5" /></a>}
+        {event.htmlLink && <a href={event.htmlLink} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-accent-strong">Open in Google Calendar <ExternalLink className="size-3.5" /></a>}
         {event.readOnly && <p className="rounded-lg bg-surface-2 p-2 text-xs text-muted">This event is {event.source === "demo" ? "synthetic demo data" : "imported from Google Calendar"}. Its time and details are read-only here.</p>}
         <Toggle checked={needsPrep} onChange={setNeedsPrep} label="Needs preparation" description="Adds a prep block in your plan and a reminder before it starts." />
         {needsPrep && (
@@ -266,7 +340,7 @@ function NewEventModal({ tz, defaultDate, onClose }: { tz: string; defaultDate: 
       <div className="flex flex-col gap-3">
         {m.error && <ErrorNote error={new Error(errorMessage(m.error))} />}
         <Field label="Title" htmlFor="e-t"><Input id="e-t" value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Date" htmlFor="e-d"><Input id="e-d" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
           <Field label="Start" htmlFor="e-s"><Input id="e-s" type="time" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
           <Field label="End" htmlFor="e-e"><Input id="e-e" type="time" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>

@@ -3,11 +3,17 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * Design tokens. Deep navy surfaces, restrained indigo accent, semantic priority colours.
- * Components use the semantic utilities below (bg-surface, text-muted …) so both themes stay in sync.
+ * LifePilot design tokens.
+ * Brand: brown #3B2418 (headings, text, sidebar), cream #F2E8DA (page), baby blue #8EC5FF (buttons,
+ * active states). Violet / green / red support data and status.
+ * - `accent` is the baby blue for fills (with brown `accent-ink` text on it, 8:1).
+ * - `accent-strong` is a deeper blue that is safe as link/accent TEXT on cream (baby blue text on
+ *   cream would be ~1.5:1). Every text/surface pairing here meets WCAG AA (4.5:1) in both themes.
+ * Components use the semantic utilities (bg-surface, text-muted, …) so both themes stay in sync.
  */
 @theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: ui-sans-serif, system-ui, -apple-system, "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --color-canvas: var(--lp-canvas);
@@ -19,40 +25,59 @@
   --color-accent: var(--lp-accent);
   --color-accent-ink: var(--lp-accent-ink);
   --color-accent-soft: var(--lp-accent-soft);
+  --color-accent-strong: var(--lp-accent-strong);
   --color-danger: var(--lp-danger);
   --color-warn: var(--lp-warn);
   --color-ok: var(--lp-ok);
+  --color-violet: var(--lp-violet);
+  --color-blue: var(--lp-blue);
+  /* Sidebar and dark brand sections: brown in both themes. */
+  --color-side: #3b2418;
+  --color-side-2: #4d3223;
+  --color-side-line: #5c3f2e;
+  --color-side-ink: #f2e8da;
+  --color-side-muted: #d2bfaa;
+
+  --radius-card: 1.25rem;
+  --shadow-card: 0 1px 2px rgb(59 36 24 / 0.05), 0 12px 32px -18px rgb(59 36 24 / 0.22);
+  --shadow-pop: 0 2px 6px rgb(59 36 24 / 0.08), 0 28px 56px -22px rgb(59 36 24 / 0.38);
 }
 
 :root {
-  --lp-canvas: #f6f7fb;
-  --lp-surface: #ffffff;
-  --lp-surface-2: #f0f1f7;
-  --lp-line: #e2e4ee;
-  --lp-ink: #151830;
-  --lp-muted: #5f6480;
-  --lp-accent: #4f46e5;
-  --lp-accent-ink: #ffffff;
-  --lp-accent-soft: #eef0ff;
-  --lp-danger: #c0362c;
-  --lp-warn: #b7791f;
-  --lp-ok: #2f855a;
+  --lp-canvas: #f2e8da;
+  --lp-surface: #fffbf5;
+  --lp-surface-2: #f8f0e4;
+  --lp-line: #e6d7c3;
+  --lp-ink: #3b2418;
+  --lp-muted: #6b5444;
+  --lp-accent: #8ec5ff;
+  --lp-accent-ink: #3b2418;
+  --lp-accent-soft: #ddeeff;
+  --lp-accent-strong: #1f5e99;
+  --lp-danger: #a8321f;
+  --lp-warn: #80520e;
+  --lp-ok: #25663f;
+  --lp-violet: #5a45b0;
+  --lp-blue: #1f5e99;
   color-scheme: light;
 }
 
 .dark {
-  --lp-canvas: #0b1020;
-  --lp-surface: #121830;
-  --lp-surface-2: #182042;
-  --lp-line: #263055;
-  --lp-ink: #e7e9f5;
-  --lp-muted: #9aa1c2;
-  --lp-accent: #8b8cf8;
-  --lp-accent-ink: #0b1020;
-  --lp-accent-soft: #1f2452;
-  --lp-danger: #f2766b;
-  --lp-warn: #f0b862;
-  --lp-ok: #6fcf97;
+  --lp-canvas: #1c130e;
+  --lp-surface: #271b14;
+  --lp-surface-2: #33241a;
+  --lp-line: #4a3628;
+  --lp-ink: #f2e8da;
+  --lp-muted: #cdb9a4;
+  --lp-accent: #8ec5ff;
+  --lp-accent-ink: #1c130e;
+  --lp-accent-soft: #1c3550;
+  --lp-accent-strong: #8ec5ff;
+  --lp-danger: #f2846f;
+  --lp-warn: #f0ba6a;
+  --lp-ok: #7dd3a0;
+  --lp-violet: #b4a6f5;
+  --lp-blue: #8ec5ff;
   color-scheme: dark;
 }
 
@@ -60,6 +85,12 @@ html,
 body,
 #root {
   min-height: 100%;
+}
+h1,
+h2,
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
 }
 body {
   background: var(--lp-canvas);
@@ -69,7 +100,7 @@ body {
 }
 
 :focus-visible {
-  outline: 2px solid var(--lp-accent);
+  outline: 2px solid var(--lp-accent-strong);
   outline-offset: 2px;
   border-radius: 6px;
 }
