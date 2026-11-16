@@ -107,10 +107,16 @@ export class OpenAIExtractor implements InsightExtractor {
       if (!parsed.success) throw new Error(`malformed model output: ${parsed.error.issues[0]?.message ?? "invalid"}`);
       const out = parsed.data;
       const deadlineAt = out.deadlineISO ? new Date(out.deadlineISO) : null;
-      const deadline = verifyModelDeadline(email, ctx.timezone, {
-        deadlineText: out.deadlineText,
-        deadlineAt: deadlineAt && !Number.isNaN(deadlineAt.getTime()) ? deadlineAt : null,
-      });
+      // A promotional date the rules deliberately ignored stays ignored, whatever the model says.
+      // Otherwise the model's deadline is kept only if verified against the email's own text.
+      const deadline = rules.signals.includes("promotion_date_ignored")
+        ? rules.deadline
+        : verifyModelDeadline(
+            email,
+            ctx.timezone,
+            { deadlineText: out.deadlineText, deadlineAt: deadlineAt && !Number.isNaN(deadlineAt.getTime()) ? deadlineAt : null },
+            rules.deadline,
+          );
       const suspicious = rules.suspicious || Boolean(detectInjection(`${email.subject}\n${email.body}`));
       const result: EmailInsightResult = {
         ...rules,

@@ -24,6 +24,7 @@ export const loginSchema = z.object({
 export const requestResetSchema = z.object({ email: z.email().transform((s) => s.toLowerCase().trim()) });
 export const resetPasswordSchema = z.object({ token: z.string().min(20).max(200), password: registerSchema.shape.password });
 export const verifyEmailSchema = z.object({ token: z.string().min(20).max(200) });
+export const resetTokenSchema = verifyEmailSchema;
 
 export const preferencesSchema = z
   .object({

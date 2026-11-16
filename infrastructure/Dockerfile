@@ -23,7 +23,9 @@ COPY --from=build /out/api/package.json ./package.json
 USER node
 EXPOSE 4000
 # Run migrations, then start. Use a separate release step instead if you run several API replicas.
-CMD ["sh", "-c", "node dist/scripts/migrate.js && node dist/server.js"]
+# `exec` makes Node the main process so it receives SIGTERM and shuts down gracefully
+# (without it the shell swallows the signal and the container is killed after the timeout).
+CMD ["sh", "-c", "node dist/scripts/migrate.js && exec node dist/server.js"]
 
 FROM node:22-bookworm-slim AS worker
 ENV NODE_ENV=production

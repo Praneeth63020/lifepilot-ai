@@ -3,6 +3,7 @@ export * from "./logger.js";
 export * from "./crypto.js";
 export * from "./context.js";
 export * from "./mailer.js";
+export * from "./email-templates.js";
 export * from "./push.js";
 export * from "./ai/extractor.js";
 export * from "./google/client.js";

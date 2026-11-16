@@ -29,6 +29,14 @@ services:
       interval: 5s
       retries: 10
 
+  # Optional local inbox: catches every email the API sends, nothing leaves your machine.
+  #   docker compose -f infrastructure/docker-compose.yml --profile mail up -d mailpit
+  # Then set SMTP_URL=smtp://localhost:1025 in .env, restart the API, and open http://localhost:8025.
+  mailpit:
+    profiles: ["mail"]
+    image: axllent/mailpit:v1.21.8
+    ports: ["1025:1025", "8025:8025"]
+
   api:
     profiles: ["app"]
     build: { context: .., dockerfile: infrastructure/Dockerfile, target: api }

@@ -152,11 +152,11 @@ export function OnboardingPage() {
             </p>
             <ul className="flex flex-col gap-2 text-sm">
               <li className="flex items-center justify-between gap-3 rounded-lg border border-line p-3">
-                <span className="flex items-center gap-2"><Inbox className="size-4 text-accent" /> Gmail — read-only</span>
+                <span className="flex items-center gap-2"><Inbox className="size-4 text-accent-strong" /> Gmail — read-only</span>
                 <Button size="sm" disabled={!config?.googleConfigured} loading={busy === "gmail"} onClick={() => finish("gmail")}>Connect</Button>
               </li>
               <li className="flex items-center justify-between gap-3 rounded-lg border border-line p-3">
-                <span className="flex items-center gap-2"><CalendarDays className="size-4 text-accent" /> Google Calendar — read-only</span>
+                <span className="flex items-center gap-2"><CalendarDays className="size-4 text-accent-strong" /> Google Calendar — read-only</span>
                 <Button size="sm" disabled={!config?.googleConfigured} loading={busy === "calendar"} onClick={() => finish("calendar")}>Connect</Button>
               </li>
             </ul>

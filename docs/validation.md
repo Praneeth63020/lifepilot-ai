@@ -1,35 +1,65 @@
 # Validating real integrations
 
-LifePilot's Google, OpenAI and web-push code is covered by automated tests against mocked services. These steps check each one against the real service. They need your own accounts and keys, so they are run by hand.
+LifePilot's Google, OpenAI and web-push code is covered by automated tests against fake versions of each service. The steps below check each one against the **real** service. They need your own accounts, keys and devices, so they are run by hand.
 
-Record the date and result of each run in the README's status table.
+Keep the results honest: a feature is "validated" only after it worked against the real service. Record the date and result in the README's status table.
+
+Never paste keys or secrets into chats, issues or screenshots. Enter them directly in `.env` (git-ignored) or the provider's console.
 
 ## OpenAI
 
-**Status (2026-11-15):** the API key is valid and the failure path is verified. A live call returned `429 You have no credits remaining`, and LifePilot fell back to the built-in rule engine as designed. The success path needs credits.
+**Status (2026-11-15):** the API key is recognised and the fallback is verified live (a call returned `429 You have no credits remaining` and LifePilot used the rule engine as designed). A successful live extraction has **not** been validated yet: the account needs credits.
 
-1. Add credits at <https://platform.openai.com/settings/organization/billing/>.
-2. Make sure `.env` has `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4.1-mini`).
-3. Run the smoke test. It sends one synthetic email (no personal data) and costs a fraction of a cent:
+1. Check credits and usage at <https://platform.openai.com/settings/organization/billing/> and <https://platform.openai.com/usage>. The organisation must have a positive credit balance (or a payment method on a paid plan).
+2. `.env` needs `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4.1-mini`). `AI_PROVIDER` does not need to change for the smoke test.
+3. Run the smoke test:
 
    ```bash
    pnpm smoke:openai
    ```
 
-4. Expect `LIVE OPENAI TEST PASSED`, provider `openai:<model>`, and an extracted deadline of `2026-11-10T11:30:00.000Z` (5 PM IST).
-5. To use it in the app, set `AI_PROVIDER=openai` and restart the API and worker. Inbox items then show "Analysed by openai:<model>".
+   It sends **exactly one** request (SDK retries are disabled, so a 429 or 5xx can't turn into several calls) with this synthetic email:
+
+   > **Subject:** Assignment submission deadline
+   > **Body:** Please submit your Chemical Engineering assignment by November 20, 2026 at 5 PM IST.
+
+   Cost: one short request of a few hundred tokens on the configured model.
+4. It passes only if every check passes: one request, answered by OpenAI (no fallback), a deadline-related category, a required action, an explicit deadline of **20 Nov 2026, 17:00 Asia/Kolkata** (`2026-11-20T11:30:00Z`) quoted from the email, no invented extra deadline, and not flagged as suspicious.
+5. To use OpenAI in the app, set `AI_PROVIDER=openai` and restart the API and worker. Every newly synced email is then one request; inbox items show "Analysed by openai:<model>". Users can still turn AI analysis off per account.
+
+Failure handling (timeouts, 429, authentication errors, invalid or partial JSON, invented deadlines, AI turned off) is covered by automated tests with a fake client: `packages/core/test/extractor.test.ts` and `apps/api/test/stability.test.ts`.
 
 ## Google (Gmail and Calendar)
 
-1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the **Gmail API** and **Google Calendar API**.
-2. Configure the **OAuth consent screen**: user type *External*, publishing status *Testing*, and add your own Google account under **Test users**. `gmail.readonly` is a restricted scope; Testing mode avoids Google's verification review for your own account.
-3. Create an **OAuth client ID** of type *Web application* with this authorized redirect URI (exact match):
+**Status (2026-11-15):** not validated against real Google. OAuth client credentials are not configured yet.
+
+### Accounts: keep three roles separate
+
+| Role | Used for |
+|---|---|
+| Google Cloud administrator | Owns project `lifepilot-ai-514000`, configures the consent screen and OAuth client |
+| Dedicated LifePilot **test** Gmail account | The only account authorised in LifePilot; holds test emails and calendar events |
+| LifePilot support email | Shown on the consent screen and used as the web-push contact; never connected for syncing |
+
+Do not authorise a personal inbox.
+
+### Console setup (project `lifepilot-ai-514000`)
+
+1. Sign in as the Cloud administrator and complete any MFA prompt.
+2. **APIs & Services → Library**: confirm **Gmail API** and **Google Calendar API** are enabled.
+3. **Google Auth Platform → Branding**: app name "LifePilot AI", support email = the LifePilot support address, developer contact email.
+4. **Audience**: user type **External**, publishing status **Testing**. Under **Test users**, add the dedicated test Gmail account (up to 100 test users).
+5. **Data access**: add exactly these scopes, nothing else:
+   - `https://www.googleapis.com/auth/gmail.readonly` (restricted)
+   - `https://www.googleapis.com/auth/calendar.readonly` (sensitive)
+6. **Clients → Create client**: type **Web application**. Authorised redirect URI, exactly:
 
    ```
    http://localhost:4000/api/v1/integrations/google/callback
    ```
 
-4. Put the credentials in `.env`, then restart `pnpm dev`:
+   No authorised JavaScript origins are needed: the browser never talks to Google directly.
+7. Copy the client ID and secret straight into `.env` (don't paste them anywhere else):
 
    ```env
    GOOGLE_CLIENT_ID=...
@@ -37,38 +67,88 @@ Record the date and result of each run in the README's status table.
    GOOGLE_REDIRECT_URI=http://localhost:4000/api/v1/integrations/google/callback
    ```
 
-5. In the app: **Settings → Connections → Connect Gmail**, approve, and confirm you return to Settings with "Gmail connected". Repeat for Calendar.
-6. Check:
+   Then restart `pnpm dev`. `GET /api/v1/config` should report `googleConfigured: true`.
+
+### What Testing mode means
+
+- Google shows a **"Google hasn't verified this app"** screen. As a listed test user, choose **Continue**.
+- **Refresh tokens expire after 7 days** for External apps in Testing status that request Gmail or Calendar scopes. LifePilot then gets `invalid_grant`, marks the connection **revoked**, stops syncing and asks to reconnect. This is expected in Testing mode, not a bug. Production needs verification (and, for `gmail.readonly`, a security assessment); see `docs/security.md`.
+- Only listed test users can authorise the app.
+
+### Connect and check
+
+Open the app at **`http://localhost:5173`**, not `127.0.0.1`: the OAuth callback on `localhost:4000` needs the same host to receive the session cookie.
+
+1. Sign in to LifePilot, go to **Settings → Connections → Connect Gmail**, choose the test account, approve. You should return to Settings with "Gmail connected".
+2. Repeat with **Connect Google Calendar**.
+3. Check:
+   - The connection shows the **test account's address**.
    - **Inbox** shows recent emails (last 14 days, promotions and social excluded) with categories and deadlines.
-   - **Calendar** shows your primary calendar's events, marked read-only.
-   - **Sync now** adds a new email you send yourself within a minute (worker running).
+   - Emails you **sent** and **drafts** never appear (send yourself a reply to check).
+   - **Calendar** shows timed events, all-day events on the right day, and recurring events as separate instances, all marked read-only.
+   - **Sync now** twice in a row adds nothing new (no duplicates). Sending a new email to the test account and syncing adds exactly one.
+   - **Settings → Connections** lists sync jobs with their status; a failed job shows its error.
    - **Disconnect** stops syncing; **Disconnect and delete** removes imported emails and events.
-   - Revoking access at <https://myaccount.google.com/permissions> marks the connection "revoked" on the next sync.
+   - Removing LifePilot at <https://myaccount.google.com/permissions> (signed in as the test account) marks the connection "revoked" on the next sync.
+
+History expiry, rejected tokens, rate limits, pagination and truncated fetches are covered by automated tests with fake Google endpoints (`apps/api/test/google-sync.test.ts`); they are hard to trigger on demand with a real account.
 
 ## Web push
 
-1. Generate VAPID keys and add them to `.env`, then restart:
+**Status (2026-11-15):** validated in **desktop Chrome 157 on macOS 26.0** against the real push service. VAPID keys are configured locally. `VAPID_SUBJECT` is still the placeholder `mailto:admin@example.com`; set it to the LifePilot support address.
 
-   ```bash
-   pnpm --filter @lifepilot/core exec web-push generate-vapid-keys
-   ```
+### Results so far
 
-   ```env
-   VAPID_PUBLIC_KEY=...
-   VAPID_PRIVATE_KEY=...
-   VAPID_SUBJECT=mailto:you@example.com
-   ```
+| Check | Chrome 157 (macOS 26) | How |
+|---|---|---|
+| Permission reported correctly | Passed | Automated, real Chrome |
+| Enable push, service worker registers | Passed | Automated, real Chrome |
+| Browser subscription created (Google FCM) | Passed | Automated, real Chrome |
+| Subscription stored by the backend | Passed | Automated, real Chrome |
+| Push accepted by the push service | Passed | Automated, real Chrome |
+| Delivered with the app tab **closed** (browser running), shown by the service worker, links to `/notifications` | Passed | Automated, real Chrome |
+| Disable push removes the subscription (browser and server) | Passed | Automated, real Chrome |
+| Subscription dropped by the browser is removed after the push service reports it gone | Passed | Automated, real Chrome |
+| Removed after 5 consecutive failures | Passed | Automated test with a fake push service (can't be triggered safely on demand) |
+| In-app toast while the tab is open: Snooze 15 min, Dismiss, Mark done | Passed | Automated, real Chrome and live worker |
+| System notification banner appears; clicking it opens LifePilot on Notifications | **To check by hand** | Needs a person watching the screen |
+| Background tab (not closed) shows a browser notification | **To check by hand** | |
+| Quiet hours defer delivery | Passed | Automated test |
+| No duplicates on job retry; pending push resent after a worker crash | Passed | Automated tests |
+| Reminders survive a worker restart | Passed | Automated test (worker persistence) |
 
-2. Push needs a secure origin: `http://localhost` works on the same machine. For a phone, use an HTTPS tunnel or a deployed instance.
-3. In **Settings → Notifications**, enable browser notifications and allow the permission prompt.
-4. Create a task due 3 minutes from now with reminder lead time 0, close the tab, and wait for the notification. Clicking it should open **Notifications**.
-5. Test on each target:
+Re-run the Chrome check any time (sends one real push through Google FCM):
 
-   | Browser / device | Notes |
-   |---|---|
-   | Chrome (macOS, Windows, Android) | Standard Web Push |
-   | Firefox (desktop, Android) | Standard Web Push |
-   | Safari (macOS 13+) | Standard Web Push |
-   | Safari (iOS/iPadOS 16.4+) | Only after **Add to Home Screen**; open from the home-screen icon |
+```bash
+LIVE_PUSH=1 E2E_BASE_URL=http://localhost:5173 \
+PW_CHROMIUM_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+pnpm --filter @lifepilot/web exec playwright test e2e/push-live.spec.ts
+```
 
-6. Signing out should stop notifications in that browser (the subscription is removed).
+Add `HEADED=1` to watch it.
+
+### Manual checks
+
+1. Open `http://localhost:5173`, sign in, **Settings → Notifications → Browser push notifications**, allow the prompt.
+2. macOS: make sure **System Settings → Notifications → [browser]** allows notifications, and Focus is off.
+3. **Send a test reminder**, then:
+   - keep the tab open: an in-app toast with the LifePilot sound;
+   - switch to another tab: a system notification;
+   - close the LifePilot tab (keep the browser running): a system notification; click it and LifePilot should open on **Notifications**.
+4. Background and closed-tab notifications use the **browser's/system's** sound. The custom LifePilot sounds play only while LifePilot is open.
+
+### Device and browser matrix
+
+| Platform | Status | What's needed |
+|---|---|---|
+| Chrome desktop (macOS) | Automated live checks passed; banner and click to confirm by hand | — |
+| Safari 26 (macOS 26) | Not tested | Try on `http://localhost:5173`. If Safari refuses push there, it needs HTTPS (see below). |
+| Firefox desktop | Not tested | Firefox isn't installed on this Mac |
+| iPhone / iPad (iOS/iPadOS 16.4+) | Not tested | HTTPS with a certificate the device trusts, and **Add to Home Screen** first; push only works when opened from the home-screen icon |
+
+**HTTPS for phones.** Push needs a secure origin, and `localhost` is only secure on the same machine. Options, in order of preference:
+
+1. A **private deployment** (for example the Railway setup in `docs/railway-demo-deployment.md`) with its own VAPID keys and `NODE_ENV=production`. Only deploy with your explicit decision.
+2. A **local HTTPS certificate** (e.g. `mkcert`) for the Mac's LAN address, with the mkcert root certificate installed and trusted on the iPhone. API and web URLs, cookies and the OAuth redirect must then use that HTTPS address.
+
+Don't expose the development stack through a public tunnel: it carries development secrets and demo accounts.

@@ -12,6 +12,7 @@ async function signUp(page: Page) {
   await page.fill("#name", "E2E Tester");
   await page.fill("#email", email);
   await page.fill("#password", "e2e-password-123");
+  await page.check("#terms");
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/onboarding/);
   return email;
@@ -36,7 +37,7 @@ test("full demo workflow", async ({ page }) => {
   await page.fill("#t-est", "45");
   await page.fill("#t-dd", istDate(1));
   await page.fill("#t-dt", "16:00");
-  await page.getByRole("button", { name: "Add task" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Add task", exact: true }).click();
   await expect(page.getByText("E2E write release notes")).toBeVisible();
 
   // 4. Reminder visible as scheduled
@@ -61,24 +62,26 @@ test("full demo workflow", async ({ page }) => {
   await page.goto("/app/notifications");
   await expect(page.getByText("E2E write release notes")).toHaveCount(0);
 
-  // 7 + 8. A demo email produces a proposed task; the user approves it
+  // 7 + 8. A demo email produces a proposed task; the user approves it (three-panel inbox: list → details)
   await page.goto("/app/inbox");
-  const card = page.locator("li").filter({ hasText: "Assignment 3 — Distributed Systems" }).first();
-  await expect(card).toContainText("Stated in the email");
-  await card.getByRole("button", { name: "Create task" }).click();
+  const details = page.getByRole("region", { name: "Email details" });
+  await page.getByRole("button", { name: /Assignment 3 — Distributed Systems/ }).click();
+  await expect(details).toContainText("Stated in the email");
+  await details.getByRole("button", { name: "Create task" }).click();
   await expect(page.locator("#a-e")).toHaveValue("240"); // estimate stated in the email
   await page.getByRole("dialog").getByRole("button", { name: "Create task" }).click();
-  await expect(card).toContainText("Task created");
+  await expect(details).toContainText("Task created");
   // Ambiguous deadline requires a date (or explicit "no deadline")
-  const q4 = page.locator("li").filter({ hasText: "Q4 report draft" }).first();
-  await q4.getByRole("button", { name: "Create task" }).click();
+  await page.getByRole("button", { name: /Q4 report draft/ }).click();
+  await details.getByRole("button", { name: "Create task" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("button", { name: "Create task" })).toBeDisabled();
   await dialog.getByLabel("No deadline").check();
   await expect(dialog.getByRole("button", { name: "Create task" })).toBeEnabled();
   await dialog.getByRole("button", { name: "Cancel" }).click();
   // Prompt-injection email is flagged
-  await expect(page.getByText("This email contains instructions aimed at an AI assistant")).toBeVisible();
+  await page.getByRole("button", { name: /Action needed on your account/ }).click();
+  await expect(details.getByText("This email contains instructions aimed at an AI assistant")).toBeVisible();
 
   // 9. A calendar conflict produces alternative times
   await page.goto("/app/calendar");
@@ -112,32 +115,80 @@ test("unauthenticated users are sent to sign in, and bad passwords are rejected"
   await expect(page.getByRole("alert")).toContainText("Incorrect email or password");
 });
 
-test("projects: create, assign a task, filter, and use the actions menu", async ({ page }) => {
+test("projects: create, validate, assign a task, track progress, and move between project and tasks", async ({ page }) => {
   await signUp(page);
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Load demo data" }).click();
   await expect(page).toHaveURL(/\/app$/);
 
-  await page.goto("/app/tasks");
-  await page.getByRole("button", { name: "Projects" }).click();
+  await page.getByRole("link", { name: "Projects" }).first().click();
+  await expect(page.getByText("No projects yet")).toBeVisible();
+  await page.getByRole("button", { name: "New project" }).click();
   await page.fill("#p-name", "Job search");
-  await page.getByRole("dialog").getByRole("button", { name: "Add" }).click();
-  await expect(page.getByRole("dialog").getByLabel("Name of Job search")).toBeVisible();
-  await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Create project" }).click();
+  await expect(page.getByRole("link", { name: "Job search" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Edit Prepare slides for design review" }).click();
+  // Duplicate names are caught while typing.
+  await page.getByRole("button", { name: "New project" }).click();
+  await page.fill("#p-name", "job SEARCH");
+  await expect(page.getByText('You already have a project called "Job search".')).toBeVisible();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Create project" })).toBeDisabled();
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+
+  // Assign a task due later this week (demo data), then the card shows progress and the next deadline.
+  await page.goto("/app/tasks");
+  await page.getByRole("button", { name: "Edit Submit passport renewal form" }).click();
   await page.selectOption("#t-proj", { label: "Job search" });
   await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.goto("/app/projects");
+  await expect(page.getByText("0 of 1 done")).toBeVisible();
+  await expect(page.getByText(/Next: Submit passport renewal form/)).toBeVisible();
 
-  // The filter chip shows the open-task count and narrows the list to that project.
-  await page.getByRole("button", { name: /Job search\s*1/ }).click();
-  await expect(page.getByText("Prepare slides for design review")).toBeVisible();
+  // Project → its tasks (filtered, with the project header) and back.
+  await page.getByRole("link", { name: "View tasks" }).click();
+  await expect(page).toHaveURL(/\/app\/tasks\?project=/);
+  await expect(page.getByRole("heading", { name: "Job search" })).toBeVisible();
+  await expect(page.getByText("Submit passport renewal form", { exact: true })).toBeVisible();
   await expect(page.getByText("Weekly grocery order")).toHaveCount(0);
 
-  // Less common actions live in the per-task menu; Escape closes it.
-  await page.getByRole("button", { name: "More actions for Prepare slides for design review" }).click();
+  // Less common task actions live in the per-task menu; Escape closes it.
+  await page.getByRole("button", { name: "More actions for Submit passport renewal form" }).click();
   await expect(page.getByRole("menuitem", { name: "Remind me…" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toHaveCount(0);
+});
+
+test("support and password recovery: reachable from the website, sign-in and the app", async ({ page }) => {
+  // Website footer → Contact support.
+  await page.goto("/");
+  await page.getByRole("contentinfo").getByRole("link", { name: "Contact support" }).click();
+  await expect(page).toHaveURL(/\/support$/);
+  await expect(page.getByRole("heading", { name: "How can we help?" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Contact LifePilot support" })).toBeVisible();
+
+  // Sign-in → Forgot password? keeps the email typed so far.
+  await page.goto("/login");
+  await page.fill("#email", "someone@example.com");
+  await page.getByRole("link", { name: "Forgot password?" }).click();
+  await expect(page.getByRole("heading", { name: "Forgot your password?" })).toBeVisible();
+  await expect(page.locator("#email")).toHaveValue("someone@example.com");
+
+  // A made-up, expired or used reset link explains itself instead of showing the form.
+  await page.goto(`/reset-password?token=${"x".repeat(43)}`);
+  await expect(page.getByRole("heading", { name: "This link has expired" })).toBeVisible();
+  await expect(page.locator("#pw")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Request a new link" })).toHaveAttribute("href", "/forgot-password");
+
+  // Inside the app: Help & support in the sidebar.
+  await signUp(page);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Load demo data" }).click();
+  await expect(page).toHaveURL(/\/app$/);
+  await page.getByRole("link", { name: "Help & support" }).first().click();
+  await expect(page).toHaveURL(/\/app\/support$/);
+  await expect(page.getByRole("heading", { name: "Help & support" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Report a bug" })).toBeVisible();
 });

@@ -5,6 +5,7 @@
  */
 import { Queue, type ConnectionOptions } from "bullmq";
 import { Redis } from "ioredis";
+export type { Redis } from "ioredis";
 
 export const REMINDER_QUEUE = "reminders";
 export const SYNC_QUEUE = "sync";

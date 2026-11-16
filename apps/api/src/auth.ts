@@ -100,11 +100,22 @@ export function csrfGuard(req: Request, _res: Response, next: NextFunction) {
   next();
 }
 
+/** How long emailed links stay valid. */
+export const AUTH_TOKEN_TTL_MS = { verify_email: 48 * 3600_000, reset_password: 3600_000 } as const;
+
+/** 256 random bits; only the SHA-256 hash is stored, so a database leak doesn't expose usable links. */
 export async function issueAuthToken(ctx: CoreContext, userId: string, kind: "verify_email" | "reset_password"): Promise<string> {
   const token = randomToken(32);
-  const ttl = kind === "verify_email" ? 48 * 3600_000 : 3600_000;
-  await ctx.db.insert(authTokens).values({ userId, kind, tokenHash: sha256(token), expiresAt: new Date(ctx.now().getTime() + ttl) });
+  await ctx.db.insert(authTokens).values({ userId, kind, tokenHash: sha256(token), expiresAt: new Date(ctx.now().getTime() + AUTH_TOKEN_TTL_MS[kind]) });
   return token;
+}
+
+/** Whether a token is unused and unexpired, without using it up. */
+export async function isAuthTokenValid(ctx: CoreContext, token: string, kind: "verify_email" | "reset_password"): Promise<boolean> {
+  const row = await ctx.db.query.authTokens.findFirst({
+    where: and(eq(authTokens.tokenHash, sha256(token)), eq(authTokens.kind, kind), isNull(authTokens.usedAt), gt(authTokens.expiresAt, ctx.now())),
+  });
+  return Boolean(row);
 }
 
 /** Single-use, unexpired token → user id. */

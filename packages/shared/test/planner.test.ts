@@ -101,6 +101,56 @@ describe("daily planner", () => {
   });
 });
 
+describe("planning accuracy", () => {
+  const firstBlock = (plan: ReturnType<typeof generateDailyPlan>, id: string) => plan.items.find((i) => i.taskId === id);
+  const lastBlock = (plan: ReturnType<typeof generateDailyPlan>, id: string) => plan.items.filter((i) => i.taskId === id).at(-1);
+
+  it("meets every deadline that can be met: work due today is scheduled earliest-deadline-first", () => {
+    // Before: the high-priority 17:00 task took the morning and the 11:00 task finished late.
+    const plan = generateDailyPlan({
+      date,
+      now: at(8),
+      tasks: [
+        task({ id: "high-due-5pm", priority: "high", estimateMin: 90, dueAt: at(17) }),
+        task({ id: "medium-due-11am", priority: "medium", estimateMin: 60, dueAt: at(11) }),
+      ],
+      events: [],
+      prefs,
+    });
+    expect(lastBlock(plan, "medium-due-11am")!.endAt <= at(11)).toBe(true);
+    expect(lastBlock(plan, "high-due-5pm")!.endAt <= at(17)).toBe(true);
+    expect(plan.warnings.join(" ")).not.toMatch(/after its due time/);
+    // "What matters most" is unchanged: the high-priority task still ranks first.
+    expect(plan.topTasks[0]!.taskId).toBe("high-due-5pm");
+  });
+
+  it("places today's deadlines before already-overdue work", () => {
+    const plan = generateDailyPlan({
+      date,
+      now: at(9),
+      tasks: [task({ id: "overdue", priority: "high", dueAt: at(8) }), task({ id: "due-10am", dueAt: at(10) })],
+      events: [],
+      prefs,
+    });
+    expect(firstBlock(plan, "due-10am")!.startAt.getTime()).toBe(at(9).getTime());
+    expect(firstBlock(plan, "overdue")!.startAt >= at(10)).toBe(true);
+  });
+
+  it("never schedules work during sleep hours, and says why", () => {
+    const plan = generateDailyPlan({
+      date,
+      now: at(0),
+      tasks: [task({ id: "late", estimateMin: 120 })],
+      events: [],
+      prefs: { ...prefs, workStartMin: 18 * 60, workEndMin: 23 * 60 + 59, sleepStartMin: 22 * 60, sleepEndMin: 7 * 60 },
+    });
+    expect(plan.items.filter((i) => i.kind === "task").every((i) => i.endAt <= at(22))).toBe(true);
+    expect(plan.warnings.join(" ")).toMatch(/overlap your sleep hours/);
+    // No warning when they don't overlap.
+    expect(generateDailyPlan({ date, now: at(0), tasks: [], events: [], prefs: { ...prefs, sleepStartMin: 23 * 60, sleepEndMin: 7 * 60 } }).warnings.join(" ")).not.toMatch(/sleep/);
+  });
+});
+
 describe("calendar conflicts", () => {
   it("detects overlaps and ignores all-day / cancelled events", () => {
     const evs = [

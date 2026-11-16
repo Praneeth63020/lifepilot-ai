@@ -125,7 +125,7 @@ export function insightDTO(
   };
 }
 
-export function planDTO(p: FullPlan): DailyPlanDTO {
+export function planDTO(p: FullPlan, drift: string[] = []): DailyPlanDTO {
   return {
     id: p.id,
     date: p.date,
@@ -144,6 +144,7 @@ export function planDTO(p: FullPlan): DailyPlanDTO {
       isFact: i.isFact,
     })),
     ...p.details,
+    drift,
   };
 }
 

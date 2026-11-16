@@ -1,8 +1,8 @@
 import pino, { type Logger } from "pino";
 
 /** Structured JSON logger with secrets and personal content redacted. */
-export function createLogger(level: string, name: string): Logger {
-  return pino({
+export function createLogger(level: string, name: string, destination?: pino.DestinationStream): Logger {
+  const options: pino.LoggerOptions = {
     name,
     level,
     redact: {
@@ -24,7 +24,8 @@ export function createLogger(level: string, name: string): Logger {
       ],
       censor: "[redacted]",
     },
-  });
+  };
+  return destination ? pino(options, destination) : pino(options);
 }
 
 export type { Logger };

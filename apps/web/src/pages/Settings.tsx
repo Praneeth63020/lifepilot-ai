@@ -1,18 +1,29 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { CalendarDays, Download, Inbox, RefreshCw, Send } from "lucide-react";
+import { Bell, CalendarDays, Download, Inbox, KeyRound, LifeBuoy, Link2, RefreshCw, Send, ShieldCheck, SlidersHorizontal, UserRound, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import type { ConnectionDTO, PreferencesDTO } from "@lifepilot/shared";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import type { ConnectionDTO, EmailRequestDTO, PreferencesDTO } from "@lifepilot/shared";
+import { DevMailNote } from "../components/DevMailNote";
+import { SupportContactCard } from "../components/SupportContent";
 import { api, errorMessage } from "../api";
 import { SoundPicker, TimeOfDay, TimezoneSelect } from "../components/prefs";
 import { useToast } from "../components/toast";
-import { Badge, Button, Card, ErrorNote, Field, Input, PageHeader, Select, Toggle, buttonClass } from "../components/ui";
+import { Avatar, Badge, Button, Card, ErrorNote, Field, Input, PageHeader, Select, Toggle, buttonClass, useTabs } from "../components/ui";
 import { fmtDateTime, relative } from "../lib/format";
 import { disablePush, enablePush, pushSupport } from "../lib/push";
 import { useSession } from "../session";
 
-const TABS = ["General", "Notifications", "Connections", "Privacy & data", "Security"] as const;
+const TABS = ["Profile", "General", "Notifications", "Connections", "Privacy & data", "Security", "Support"] as const;
+const TAB_META: Record<(typeof TABS)[number], { icon: LucideIcon; hint: string }> = {
+  Profile: { icon: UserRound, hint: "Your account" },
+  General: { icon: SlidersHorizontal, hint: "Time zone, hours, planner, AI" },
+  Notifications: { icon: Bell, hint: "Reminders, sounds, push, quiet hours" },
+  Connections: { icon: Link2, hint: "Gmail and Google Calendar" },
+  "Privacy & data": { icon: ShieldCheck, hint: "Export or delete your data" },
+  Security: { icon: KeyRound, hint: "Email verification, sessions" },
+  Support: { icon: LifeBuoy, hint: "Help and contact" },
+};
 type Tab = (typeof TABS)[number];
 
 function usePrefsSaver() {
@@ -33,7 +44,16 @@ export function SettingsPage() {
   const [params, setParams] = useSearchParams();
   const toast = useToast();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<Tab>(params.get("connected") || params.get("error") ? "Connections" : "General");
+  // ?tab= accepts the section name in any case ("notifications", "Privacy & data", …).
+  const requested = TABS.find((t) => t.toLowerCase() === (params.get("tab") ?? "").toLowerCase()) ?? null;
+  const [tab, setTab] = useState<Tab>(
+    params.get("connected") || params.get("error") ? "Connections" : (TABS as readonly string[]).includes(requested ?? "") ? (requested as Tab) : "General",
+  );
+  const tabs = useTabs("settings", TABS, tab, setTab, "vertical");
+  // In-app links like ?tab=Notifications switch section without reloading.
+  useEffect(() => {
+    if (requested && (TABS as readonly string[]).includes(requested)) setTab(requested as Tab);
+  }, [requested]);
 
   // Result of the Google OAuth round-trip.
   useEffect(() => {
@@ -49,19 +69,45 @@ export function SettingsPage() {
 
   return (
     <div>
-      <PageHeader title="Settings" />
-      <div role="tablist" aria-label="Settings sections" className="mb-5 flex gap-1 overflow-x-auto border-b border-line">
-        {TABS.map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={clsx("-mb-px shrink-0 border-b-2 px-3 py-2 text-sm", tab === t ? "border-accent font-medium text-ink" : "border-transparent text-muted hover:text-ink")}>
-            {t}
-          </button>
-        ))}
+      <PageHeader title="Settings" subtitle="Your account, schedule, notifications, connections and data." />
+      <div className="grid gap-6 lg:grid-cols-12">
+        {/* Section menu: vertical on desktop, a scrollable row on smaller screens. */}
+        <div
+          role="tablist"
+          aria-label="Settings sections"
+          aria-orientation="vertical"
+          className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:col-span-3 lg:mx-0 lg:flex-col lg:self-start lg:overflow-visible lg:rounded-[var(--radius-card)] lg:border lg:border-line lg:bg-surface lg:p-2 lg:shadow-card xl:col-span-2"
+        >
+          {TABS.map((t) => {
+            const Icon = TAB_META[t].icon;
+            return (
+              <button
+                key={t}
+                {...tabs.tabProps(t)}
+                className={clsx(
+                  "flex shrink-0 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors",
+                  tab === t ? "bg-ink font-medium text-canvas" : "text-muted hover:bg-surface-2 hover:text-ink",
+                )}
+              >
+                <Icon className="size-4 shrink-0" aria-hidden />
+                <span className="flex flex-col">
+                  <span>{t}</span>
+                  <span className={clsx("hidden text-[11px] lg:block", tab === t ? "text-canvas/70" : "text-muted")}>{TAB_META[t].hint}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div {...tabs.panelProps} className="min-w-0 lg:col-span-9 xl:col-span-10">
+          {tab === "Profile" && <ProfileTab />}
+          {tab === "General" && <GeneralTab />}
+          {tab === "Notifications" && <NotificationsTab />}
+          {tab === "Connections" && <ConnectionsTab />}
+          {tab === "Privacy & data" && <PrivacyTab />}
+          {tab === "Security" && <SecurityTab />}
+          {tab === "Support" && <SupportTab />}
+        </div>
       </div>
-      {tab === "General" && <GeneralTab />}
-      {tab === "Notifications" && <NotificationsTab />}
-      {tab === "Connections" && <ConnectionsTab />}
-      {tab === "Privacy & data" && <PrivacyTab />}
-      {tab === "Security" && <SecurityTab />}
     </div>
   );
 }
@@ -89,7 +135,7 @@ function GeneralTab() {
       </Card>
       <Card title="Planner">
         <div className="flex flex-col gap-3">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-3">
             <Field label="Focus block" htmlFor="g-fb"><Select id="g-fb" value={p.focusBlockMin} onChange={(e) => set("focusBlockMin", Number(e.target.value))}>{[25, 45, 60, 90, 120].map((m) => <option key={m} value={m}>{m} min</option>)}</Select></Field>
             <Field label="Break" htmlFor="g-br"><Select id="g-br" value={p.breakMin} onChange={(e) => set("breakMin", Number(e.target.value))}>{[0, 5, 10, 15, 20].map((m) => <option key={m} value={m}>{m} min</option>)}</Select></Field>
             <Field label="Buffer after events" htmlFor="g-bu"><Select id="g-bu" value={p.bufferMin} onChange={(e) => set("bufferMin", Number(e.target.value))}>{[0, 5, 10, 15, 30].map((m) => <option key={m} value={m}>{m} min</option>)}</Select></Field>
@@ -265,7 +311,7 @@ function ConnectionsTab() {
           const name = c.product === "gmail" ? "Gmail" : "Google Calendar";
           const isDemo = c.provider === "demo";
           return (
-            <Card key={c.product} title={<span className="flex items-center gap-2"><Icon className="size-4 text-accent" /> {name}</span>}
+            <Card key={c.product} title={<span className="flex items-center gap-2"><Icon className="size-4 text-accent-strong" /> {name}</span>}
               action={
                 c.status === "active" ? (isDemo ? <Badge tone="warn">Demo data</Badge> : <Badge tone="ok">Connected</Badge>)
                 : c.status === "not_connected" ? <Badge>Not connected</Badge>
@@ -366,13 +412,22 @@ function SecurityTab() {
   const toast = useToast();
   const qc = useQueryClient();
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: () => api.get<{ items: { id: string; current: boolean; userAgent: string | null; createdAt: string; lastSeenAt: string }[] }>("/auth/sessions") });
-  const revoke = useMutation({ mutationFn: () => api.post("/auth/sessions/revoke-others"), onSuccess: () => { qc.invalidateQueries({ queryKey: ["sessions"] }); toast({ title: "Signed out other devices", tone: "success" }); } });
-  const resend = useMutation({ mutationFn: () => api.post("/auth/resend-verification"), onSuccess: () => toast({ title: "Verification email sent", tone: "success" }) });
+  const revoke = useMutation({
+    mutationFn: () => api.post("/auth/sessions/revoke-others"),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["sessions"] }); toast({ title: "Signed out other devices", tone: "success" }); },
+    onError: (e) => toast({ title: "Couldn't sign out other devices", body: errorMessage(e), tone: "error" }),
+  });
+  const resend = useMutation({
+    mutationFn: () => api.post<EmailRequestDTO>("/auth/resend-verification"),
+    onSuccess: (r) => { if (!r.devMail) toast({ title: "Verification email sent", tone: "success" }); },
+    onError: (e) => toast({ title: "Couldn't send the email", body: errorMessage(e), tone: "error" }),
+  });
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       <Card title="Email">
         <p className="text-sm">{me!.user.email} {me!.user.emailVerified ? <Badge tone="ok">verified</Badge> : <Badge tone="warn">not verified</Badge>}</p>
         {!me!.user.emailVerified && <Button className="mt-3" size="sm" loading={resend.isPending} onClick={() => resend.mutate()}>Resend verification email</Button>}
+        {resend.data?.devMail && <div className="mt-3"><DevMailNote devMail={resend.data.devMail} action="Verify my email" /></div>}
         <p className="mt-3 text-xs text-muted">To change your password, sign out and use “Forgot password”. All sessions are signed out after a reset.</p>
       </Card>
       <Card title="Active sessions" action={<Button size="sm" variant="ghost" onClick={() => revoke.mutate()}>Sign out others</Button>}>
@@ -384,6 +439,82 @@ function SecurityTab() {
             </li>
           ))}
         </ul>
+      </Card>
+    </div>
+  );
+}
+
+function ProfileTab() {
+  const { me } = useSession();
+  const u = me!.user;
+  const prefs = me!.preferences;
+  return (
+    <div className="grid gap-6 xl:grid-cols-2">
+      <Card title="Profile" icon={<UserRound />}>
+        <div className="flex items-center gap-4">
+          <Avatar name={u.name} className="size-14 text-lg" />
+          <div className="min-w-0">
+            <p className="truncate font-display text-lg font-semibold">{u.name}</p>
+            <p className="truncate text-sm text-muted">{u.email}</p>
+            <p className="mt-1">{u.emailVerified ? <Badge tone="ok">Email verified</Badge> : <Badge tone="warn">Email not verified</Badge>}</p>
+          </div>
+        </div>
+        <dl className="mt-5 grid grid-cols-2 gap-3 text-sm">
+          <div className="rounded-xl bg-surface-2 px-3 py-2.5">
+            <dt className="text-xs text-muted">Member since</dt>
+            <dd className="font-medium">{new Date(u.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}</dd>
+          </div>
+          <div className="rounded-xl bg-surface-2 px-3 py-2.5">
+            <dt className="text-xs text-muted">Time zone</dt>
+            <dd className="truncate font-medium">{prefs.timezone}</dd>
+          </div>
+        </dl>
+        <p className="mt-4 text-xs text-muted">Changing your name or sign-in email isn't available yet.</p>
+      </Card>
+      <Card title="Account shortcuts" icon={<SlidersHorizontal />}>
+        <ul className="flex flex-col gap-2 text-sm">
+          {([
+            ["Working hours, sleep and time zone", "/app/settings?tab=General"],
+            ["Reminders, sounds and quiet hours", "/app/settings?tab=Notifications"],
+            ["Gmail and Google Calendar", "/app/settings?tab=Connections"],
+            ["Export or delete your data", "/app/settings?tab=Privacy%20%26%20data"],
+          ] as const).map(([label, href]) => (
+            <li key={href}>
+              <Link to={href} className="flex items-center justify-between rounded-xl border border-line px-3 py-2.5 hover:bg-surface-2">
+                {label} <span aria-hidden className="text-muted">→</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </div>
+  );
+}
+
+function SupportTab() {
+  const { config } = useSession();
+  return (
+    <div className="grid gap-6 xl:grid-cols-2">
+      <div className="flex flex-col gap-4">
+        <SupportContactCard />
+        <Link to="/app/support" className={buttonClass({ variant: "secondary", className: "self-start" })}>
+          <LifeBuoy className="size-4" aria-hidden /> Open Help &amp; support
+        </Link>
+      </div>
+      <Card title="About this server" icon={<ShieldCheck />}>
+        <dl className="grid grid-cols-2 gap-3 text-sm">
+          {[
+            ["Demo mode", config?.demoMode ? "On" : "Off"],
+            ["Google connections", config?.googleConfigured ? "Available" : "Not configured"],
+            ["Email analysis", config?.aiProvider === "openai" ? "OpenAI" : "Built-in rules"],
+            ["Browser push", config?.webPushPublicKey ? "Available" : "Not configured"],
+          ].map(([k, v]) => (
+            <div key={k} className="rounded-xl bg-surface-2 px-3 py-2.5">
+              <dt className="text-xs text-muted">{k}</dt>
+              <dd className="font-medium">{v}</dd>
+            </div>
+          ))}
+        </dl>
       </Card>
     </div>
   );
