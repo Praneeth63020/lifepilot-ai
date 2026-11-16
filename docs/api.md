@@ -14,11 +14,11 @@
 |---|---|---|
 | GET | `/health` | `{status:"ok"}` |
 | GET | `/health/ready` | `{status, db, redis}` — 503 if degraded |
-| GET | `/config` | `{demoMode, googleConfigured, aiProvider, webPushPublicKey, mailConfigured}` |
+| GET | `/config` | `{demoMode, googleConfigured, aiProvider, webPushPublicKey, mailConfigured, supportEmail, supportResponseTime}`. The last two are `null` unless configured |
 
 ## Auth (`/auth`)
 
-These endpoints are rate limited to 20 requests per 15 minutes.
+These endpoints share a limit of 20 requests per 15 minutes per client IP. Additionally, an account allows 10 **failed** sign-ins per 15 minutes from any IP, and an email address 5 reset requests per hour. All API requests are limited to 300 per minute per IP. Limits are shared across API instances (Redis). A limited request gets `429` with `{"error":{"code":"rate_limited",…}}` plus `RateLimit`, `RateLimit-Policy` and `Retry-After` headers.
 
 | Method | Path | Body | Result |
 |---|---|---|---|
@@ -27,9 +27,12 @@ These endpoints are rate limited to 20 requests per 15 minutes.
 | POST | `/logout` | – | 204 |
 | GET | `/me` | – | `{user, preferences}`; 401 |
 | POST | `/verify-email` | `{token}` | single-use, 48 h |
-| POST | `/resend-verification` | – | 502 `email_failed` if the email couldn't be sent |
-| POST | `/request-password-reset` | `{email}` | always 200 |
-| POST | `/reset-password` | `{token, password}` | single-use, 1 h; signs out all sessions |
+| POST | `/resend-verification` | – | 502 `email_failed` if the email couldn't be sent. Local development without SMTP also returns `devMail.link` (see below) |
+| POST | `/request-password-reset` | `{email}` | always 200 `{ok: true}`. Local development without SMTP also returns `devMail: {link}` (`null` when no account has that email) |
+
+`devMail` is returned only when all of these hold: `NODE_ENV=development`, `SMTP_URL` is empty, the request comes straight from the same machine (loopback address), and it carries no `X-Forwarded-For` / `Forwarded` header (so it is off through a tunnel or proxy). Production refuses to start without `SMTP_URL`, so it never appears there.
+| POST | `/reset-password/check` | `{token}` | `{valid}`: whether a reset link is unused and unexpired. Doesn't use it up |
+| POST | `/reset-password` | `{token, password}` | single-use, 1 h; cancels every other reset link, signs out all sessions, then emails a "password changed" notice |
 | GET | `/sessions` | – | active sessions |
 | POST | `/sessions/revoke-others` | – | |
 
