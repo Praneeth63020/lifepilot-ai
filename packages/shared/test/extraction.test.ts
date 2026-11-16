@@ -201,3 +201,57 @@ describe("model deadline verification with several dates", () => {
     expect(r.deadlineAt).toBeNull();
   });
 });
+
+describe("commitments vs informational dates (received Mon 2 Nov 2026, 10:00 IST)", () => {
+  const d = (t: string) => extractDeadline(t, received, tz);
+
+  it("'before Friday' means by the end of Thursday; a stated time is kept", () => {
+    expect(local(d("Please send this before Friday.").deadlineAt)).toBe("2026-11-05 23:59");
+    expect(local(d("Please send this before Nov 10.").deadlineAt)).toBe("2026-11-09 23:59");
+    expect(local(d("Please send this before 5 PM Friday.").deadlineAt)).toBe("2026-11-06 17:00");
+  });
+
+  it("infers a day without a month, and asks when that day doesn't exist", () => {
+    const r = d("The application closes on the 20th.");
+    expect([local(r.deadlineAt), r.certainty]).toEqual(["2026-11-20 23:59", "inferred"]);
+    expect(local(d("Submit by the 1st.").deadlineAt)).toBe("2026-12-01 23:59"); // already past this month
+    expect(d("Submit by the 31st.").certainty).toBe("ambiguous"); // there is no 31 November
+  });
+
+  it("reads 'end of day tomorrow' as tomorrow, but still asks about a bare 'end of day'", () => {
+    expect(local(d("Kindly submit by end of day tomorrow.").deadlineAt)).toBe("2026-11-03 23:59");
+    expect(d("Kindly submit by end of day.").certainty).toBe("ambiguous");
+  });
+
+  it("treats 'within N days' as a deadline only when something is asked for", () => {
+    const r = d("Payment must be completed within three days.");
+    expect([local(r.deadlineAt), r.certainty]).toEqual(["2026-11-05 23:59", "inferred"]);
+    expect(local(d("Please reply within 2 business days.").deadlineAt)).toBe("2026-11-04 23:59");
+    expect(local(d("Please confirm within 24 hours.").deadlineAt)).toBe("2026-11-03 10:00");
+    expect(d("Your order will be delivered within 3 days.").certainty).toBe("none");
+  });
+
+  it("separates moved meetings from moved deadlines", () => {
+    expect(d("The meeting has been moved to next Wednesday.").certainty).toBe("none");
+    expect(d("Our call was rescheduled to Nov 12.").certainty).toBe("none");
+    const ext = d("The deadline has been extended until the following Monday.");
+    expect([ext.certainty, ext.isChange, ext.deadlineAt]).toEqual(["ambiguous", true, null]);
+    expect(d("Update\nWe've moved it to Nov 20.").certainty).toBe("none");
+    expect(local(d("Deadline update\nWe've moved it to Nov 20.").deadlineAt)).toBe("2026-11-20 23:59"); // subject says deadline
+  });
+
+  it("parses a time written before the date", () => {
+    expect(local(d("Submit by 11:59 PM on Nov 18.").deadlineAt)).toBe("2026-11-18 23:59");
+    expect(local(d("Reply by 5 PM tomorrow.").deadlineAt)).toBe("2026-11-03 17:00");
+    expect(local(d("Send it by 9:30 am on Friday.").deadlineAt)).toBe("2026-11-06 09:30");
+    expect(local(d("Pay by midnight tonight.").deadlineAt)).toBe("2026-11-02 23:59");
+    expect(d("Pay by 5 PM EST, Nov 18.").deadlineAt?.toISOString()).toBe("2026-11-18T22:00:00.000Z");
+  });
+
+  it("never turns plain mentions or vague timing into a deadline", () => {
+    for (const t of ["I will see you next month.", "The department newsletter will be published on Friday.", "Thanks for the 3rd edition of the book.", "Results come out in 5 days."]) {
+      expect([t, d(t).deadlineAt]).toEqual([t, null]);
+    }
+    expect(d("Please get back to me soon.").certainty).toBe("ambiguous");
+  });
+});

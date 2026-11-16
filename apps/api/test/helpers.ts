@@ -45,9 +45,9 @@ export const FIXED_NOW = new Date("2026-11-02T03:30:00.000Z");
 
 const shared = createDb(TEST_DB_URL, { max: 5 });
 
-export function makeCtx(over: { now?: () => Date; fetch?: FetchLike; google?: boolean; demoMode?: boolean } = {}) {
+export function makeCtx(over: { now?: () => Date; fetch?: FetchLike; google?: boolean; demoMode?: boolean; env?: "development" | "test"; supportEmail?: string } = {}) {
   const config = loadConfig({
-    NODE_ENV: "test",
+    NODE_ENV: over.env ?? "test",
     LOG_LEVEL: "silent",
     DATABASE_URL: TEST_DB_URL,
     REDIS_URL: "redis://localhost:6379/1",
@@ -61,12 +61,17 @@ export function makeCtx(over: { now?: () => Date; fetch?: FetchLike; google?: bo
     GOOGLE_CLIENT_SECRET: over.google ? "test-client-secret" : "",
     GOOGLE_REDIRECT_URI: "http://localhost:4000/api/v1/integrations/google/callback",
     SMTP_URL: "",
+    // Pinned so a developer's own .env never changes test results.
+    MAIL_FROM: "LifePilot AI <no-reply@test.example>",
+    MAIL_REPLY_TO: "",
+    SUPPORT_EMAIL: over.supportEmail ?? "",
+    SUPPORT_RESPONSE_TIME: "",
     VAPID_PUBLIC_KEY: "",
     VAPID_PRIVATE_KEY: "",
   });
   const logger = createLogger("silent", "test");
   const jobs = new RecordingScheduler();
-  const mailer = createMailer(undefined, "test@example.com", logger);
+  const mailer = createMailer(undefined, { from: "LifePilot AI <no-reply@test.example>" }, logger);
   let current = FIXED_NOW;
   const ctx: CoreContext = {
     db: shared.db,

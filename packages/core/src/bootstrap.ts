@@ -19,7 +19,8 @@ export function createCoreContext(config: Config, name: string) {
     logger,
     jobs,
     extractor: createExtractor(config.ai, logger),
-    mailer: createMailer(config.smtpUrl, config.mailFrom, logger),
+    // In production, plain smtp:// must upgrade with STARTTLS or the send fails (never cleartext).
+    mailer: createMailer(config.smtpUrl, { from: config.mailFrom, replyTo: config.mailReplyTo, requireTLS: config.isProd }, logger),
     push: createPushSender(config.vapid),
     fetch: (input, init) => fetch(input, init),
     now: () => new Date(),

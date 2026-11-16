@@ -4,12 +4,26 @@ import type { Priority } from "./planner.js";
 
 export type Sound = "daily_chime" | "priority_alert" | "deadline_alert" | "none";
 
+/**
+ * Reply to "send me a reset/verification email". `devMail` appears only on a local development
+ * server with no SMTP configured, where the email would otherwise only reach the API log.
+ * `link` is null when no account has that email.
+ */
+export interface EmailRequestDTO {
+  ok: true;
+  devMail?: { link: string | null };
+}
+
 export interface AppConfigDTO {
   demoMode: boolean;
   googleConfigured: boolean;
   aiProvider: "mock" | "openai";
   webPushPublicKey: string | null;
   mailConfigured: boolean;
+  /** Public support address, only when SUPPORT_EMAIL is configured. */
+  supportEmail: string | null;
+  /** Expected reply time shown next to the support address, only when SUPPORT_RESPONSE_TIME is set. */
+  supportResponseTime: string | null;
 }
 
 export interface UserDTO {

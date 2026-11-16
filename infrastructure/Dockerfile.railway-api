@@ -17,4 +17,6 @@ COPY --from=build /out/api/migrations ./migrations
 COPY --from=build /out/api/package.json ./package.json
 USER node
 EXPOSE 4000
-CMD ["sh", "-c", "node dist/scripts/migrate.js && node dist/server.js"]
+# `exec` makes Node the main process so it receives SIGTERM and shuts down gracefully
+# (without it the shell swallows the signal and the container is killed after the timeout).
+CMD ["sh", "-c", "node dist/scripts/migrate.js && exec node dist/server.js"]

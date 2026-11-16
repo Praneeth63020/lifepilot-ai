@@ -21,6 +21,7 @@
     "db:seed": "pnpm --filter @lifepilot/api seed",
     "sounds": "node scripts/generate-sounds.mjs",
     "audit": "pnpm audit --prod",
+    "mail:check": "pnpm --filter @lifepilot/api exec tsx ../../packages/core/scripts/mail-check.ts",
     "smoke:openai": "pnpm --filter @lifepilot/api exec env DOTENV_CONFIG_PATH=../../.env DOTENV_CONFIG_QUIET=true tsx ../../packages/core/scripts/smoke-openai.ts"
   }
 }

@@ -127,6 +127,22 @@ const TZ_ABBR: Record<string, string> = {
 const VAGUE_RX =
   /\b(as soon as possible|asap|soon|shortly|at your earliest convenience|end of (the )?(week|month)|in (a|the) (few|next few) days|next week|eod|end of (the )?day)\b/i;
 
+/** Words that make a "moved/changed … to <date>" sentence about a deadline rather than a meeting. */
+const DEADLINE_WORDS_RX = /\b(deadline|due|submission|submit|closing date|closes|cut-?off|expir\w*|payment)\b/i;
+/** An obligation in the same sentence turns "within 3 days" into a deadline ("must", "please", …). */
+const OBLIGATION_RX = /\b(must|need to|needs to|required|requested|please|kindly|should|have to|has to|asked to|expected to)\b/i;
+const NUMBER_WORDS: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+// A time written before the date: "by 5 PM on Friday", "by 11:59 PM, Nov 18", "by midnight tonight".
+const TIME_FIRST_RX = `(?:(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm|a\\.m\\.|p\\.m\\.)|(noon|midnight))${TZ_ABBR_RX}`;
+const WEEKDAY_QUALIFIER_RX = "(this |next |coming |(?:the )?following )?";
+
+/** The sentence (or line) of `text` that contains position `index`. */
+function sentenceAround(text: string, index: number): string {
+  const before = Math.max(text.lastIndexOf(".", index - 1), text.lastIndexOf("!", index - 1), text.lastIndexOf("?", index - 1), text.lastIndexOf("\n", index - 1));
+  const afterCandidates = [".", "!", "?", "\n"].map((c) => text.indexOf(c, index)).filter((i) => i >= 0);
+  return text.slice(before + 1, afterCandidates.length ? Math.min(...afterCandidates) : text.length);
+}
+
 function zoned(tz: string, y: number, m: number, d: number, hh: number, mm: number): DateTime {
   return DateTime.fromObject({ year: y, month: m, day: d, hour: hh, minute: mm }, { zone: tz });
 }
@@ -167,8 +183,13 @@ export function extractDeadlineCandidates(text: string, receivedAt: Date, tz: st
   const received = DateTime.fromJSDate(receivedAt, { zone: tz });
   const found: DeadlineCandidate[] = [];
 
+  const subjectLine = text.split("\n", 1)[0] ?? "";
   const add = (m: RegExpExecArray, priority: number, r: DeadlineResult) => {
-    found.push({ ...r, ...(CHANGE_RX.test(m[0]) ? { isChange: true } : {}), index: m.index, end: m.index + m[0].length, priority });
+    const isChange = CHANGE_RX.test(m[0]);
+    // "The meeting has been moved to Wednesday" moves a meeting; it isn't a deadline. A verb-based
+    // change only counts when its sentence (or the subject) is about a deadline.
+    if (isChange && !/\bnew (deadline|due date)\b/i.test(m[0]) && !DEADLINE_WORDS_RX.test(sentenceAround(text, m.index)) && !DEADLINE_WORDS_RX.test(subjectLine)) return;
+    found.push({ ...r, ...(isChange ? { isChange: true } : {}), index: m.index, end: m.index + m[0].length, priority });
   };
   const ambiguous = (phrase: string, question: string): DeadlineResult => ({
     deadlineAt: null,
@@ -183,6 +204,10 @@ export function extractDeadlineCandidates(text: string, receivedAt: Date, tz: st
     const time = parseTime(timeGroups.slice(0, 6));
     const abbr = timeGroups[6]?.toUpperCase();
     let at: DateTime;
+    if (!time && /^before\b/i.test(phrase.trim())) {
+      // "before Friday" means it must be done by the end of Thursday, not Friday.
+      return { deadlineAt: dt.startOf("day").minus({ minutes: 1 }).toJSDate(), deadlineText: phrase.trim(), certainty, timeAssumed: true, question: null };
+    }
     if (time && abbr && TZ_ABBR[abbr]) {
       // "5 PM EST" is 5 PM in that zone, not in the user's.
       at = DateTime.fromObject({ year: dt.year, month: dt.month, day: dt.day, hour: time.hh, minute: time.mm }, { zone: TZ_ABBR[abbr] });
@@ -225,20 +250,68 @@ export function extractDeadlineCandidates(text: string, receivedAt: Date, tz: st
     const [day, month] = a > 12 ? [a, b] : [b, a];
     add(m, 4, finish(zoned(tz, year, month, day, 0, 0), m[0], "explicit", m.slice(4)));
   }
-  // 5) Weekday: "by Friday", "due this Friday" → inferred; "next Friday" → ambiguous.
-  for (const m of text.matchAll(all(`(this |next |coming )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)${TIME_RX}`))) {
-    if ((m[1] ?? "").trim().toLowerCase() === "next") {
-      add(m, 5, ambiguous(m[0], `The email says "${m[0].trim()}". Which date does it mean?`));
-      continue;
-    }
-    const target = WEEKDAYS[m[2]!.toLowerCase()]!;
+  // 2b) Time first: "by 11:59 PM on Nov 18", "by noon, December 1st".
+  for (const m of text.matchAll(all(`${TIME_FIRST_RX},?\\s+(?:on\\s+)?(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\\s+)?(?:the\\s+)?${MONTH_RX}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?`))) {
+    const month = MONTHS[m[6]!.toLowerCase().replace(".", "")]!;
+    add(m, 2, finish(yearOrNext(m[8], month, +m[7]!), m[0], "explicit", [m[1], m[2], m[3], undefined, undefined, m[4], m[5]]));
+  }
+  // 5) Weekday: "by Friday", "due this Friday" → inferred; "next Friday", "the following Monday" → ambiguous.
+  const weekdayResult = (m: RegExpExecArray, qualifier: string | undefined, weekday: string, timeGroups: (string | undefined)[]) => {
+    const q = (qualifier ?? "").trim().toLowerCase();
+    if (q === "next" || q.endsWith("following")) return ambiguous(m[0], `The email says "${m[0].trim()}". Which date does it mean?`);
+    const target = WEEKDAYS[weekday.toLowerCase()]!;
     const delta = (target - received.weekday + 7) % 7;
-    add(m, 5, finish(received.startOf("day").plus({ days: delta }), m[0], "inferred", m.slice(3)));
+    return finish(received.startOf("day").plus({ days: delta }), m[0], "inferred", timeGroups);
+  };
+  for (const m of text.matchAll(all(`${TIME_FIRST_RX},?\\s+(?:on\\s+)?${WEEKDAY_QUALIFIER_RX}(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\b`))) {
+    add(m, 5, weekdayResult(m, m[6], m[7]!, [m[1], m[2], m[3], undefined, undefined, m[4], m[5]]));
+  }
+  for (const m of text.matchAll(all(`${WEEKDAY_QUALIFIER_RX}(monday|tuesday|wednesday|thursday|friday|saturday|sunday)${TIME_RX}`))) {
+    add(m, 5, weekdayResult(m, m[1], m[2]!, m.slice(3)));
   }
   // 6) today / tonight / tomorrow → inferred relative to when the email was received.
+  const relativeDay = (word: string) => received.startOf("day").plus({ days: word.toLowerCase() === "tomorrow" ? 1 : 0 });
   for (const m of text.matchAll(all(`(today|tonight|tomorrow)${TIME_RX}`))) {
-    const word = m[1]!.toLowerCase();
-    add(m, 6, finish(received.startOf("day").plus({ days: word === "tomorrow" ? 1 : 0 }), m[0], "inferred", m.slice(2)));
+    add(m, 6, finish(relativeDay(m[1]!), m[0], "inferred", m.slice(2)));
+  }
+  for (const m of text.matchAll(all(`${TIME_FIRST_RX},?\\s+(today|tonight|tomorrow)\\b`))) {
+    add(m, 6, finish(relativeDay(m[6]!), m[0], "inferred", [m[1], m[2], m[3], undefined, undefined, m[4], m[5]]));
+  }
+  // "by end of day tomorrow", "by EOD today": the day is clear; the time is the end of that day.
+  for (const m of text.matchAll(all(`(?:the\\s+)?(?:end of (?:the\\s+)?(?:business\\s+|working\\s+)?day|eod|close of business|cob),?\\s+(today|tonight|tomorrow)\\b`))) {
+    add(m, 6, finish(relativeDay(m[1]!), m[0], "inferred", []));
+  }
+  // 7) A day without a month: "closes on the 20th" → the next 20th, worked out and to be checked.
+  for (const m of text.matchAll(all(`(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)\\b`))) {
+    const day = +m[1]!;
+    let dt = received.set({ day }).startOf("day");
+    if (day < received.day) dt = received.plus({ months: 1 }).set({ day }).startOf("day");
+    // Luxon rolls "Nov 31" over to Dec 1; that isn't what the email said, so ask instead.
+    if (!dt.isValid || dt.day !== day || day < 1) {
+      add(m, 7, ambiguous(m[0], `The email says "${m[0].trim()}" without a month. Which date is it?`));
+      continue;
+    }
+    add(m, 7, finish(dt, m[0], "inferred", []));
+  }
+  // 8) "within three days" — only when the same sentence asks for something ("must", "please" …);
+  //    "delivered within 3 days" is information, not a deadline.
+  for (const m of text.matchAll(/\bwithin\s+(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|an?)\s+(business\s+|working\s+)?(hours?|days?|weeks?)\b/gi)) {
+    if (!OBLIGATION_RX.test(sentenceAround(text, m.index!))) continue;
+    const n = /^\d+$/.test(m[1]!) ? +m[1]! : NUMBER_WORDS[m[1]!.toLowerCase()]!;
+    const unit = m[3]!.toLowerCase();
+    let at: DateTime;
+    if (unit.startsWith("hour")) at = received.plus({ hours: n });
+    else if (unit.startsWith("week")) at = received.plus({ weeks: n }).set({ hour: 23, minute: 59, second: 0, millisecond: 0 });
+    else if (m[2]) {
+      // Business days skip Saturday and Sunday.
+      at = received;
+      for (let left = n; left > 0; ) {
+        at = at.plus({ days: 1 });
+        if (at.weekday <= 5) left--;
+      }
+      at = at.set({ hour: 23, minute: 59, second: 0, millisecond: 0 });
+    } else at = received.plus({ days: n }).set({ hour: 23, minute: 59, second: 0, millisecond: 0 });
+    add(m as RegExpExecArray, 8, { deadlineAt: at.toJSDate(), deadlineText: m[0], certainty: "inferred", timeAssumed: !unit.startsWith("hour"), question: null });
   }
 
   // The same words can match several patterns ("by Friday, Nov 6" is a month-name date and a
