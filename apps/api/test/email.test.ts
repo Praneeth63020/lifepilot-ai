@@ -281,7 +281,9 @@ describe("reset and verification links", () => {
 describe("mail and support configuration", () => {
   const base = {
     NODE_ENV: "test",
+    // Every required setting is given here, so results never depend on a developer's .env (CI has none).
     DATABASE_URL: "postgresql://x@localhost/x",
+    REDIS_URL: "redis://localhost:6379/1",
     SESSION_SECRET: "test-session-secret-test-session-secret-123",
     TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
     SMTP_URL: "",
