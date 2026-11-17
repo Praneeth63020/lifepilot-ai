@@ -77,7 +77,11 @@ async function waitFor(check: () => boolean, ms = 3000) {
   }
 }
 
-const tokenIn = (s: string) => /token=([\w-]+)/.exec(decodeQP(s))![1]!;
+/**
+ * Callers pass plain text or text already run through decodeQP. Decoding again would turn a token
+ * that starts with two hex digits (`token=3Fab…`) into `token?ab…`, failing ~6% of the time.
+ */
+const tokenIn = (s: string) => /token=([\w-]+)/.exec(s)![1]!;
 
 describe("email templates", () => {
   const brand = { webUrl: "https://app.lifepilot.test", supportEmail: "support@lifepilot.test" };
