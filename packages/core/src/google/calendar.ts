@@ -67,7 +67,13 @@ export function mapGoogleEvent(ev: GCalEvent, fallbackTz: string): MappedEvent |
 }
 
 /** Primary-calendar events in [timeMin, timeMax], recurring series expanded into instances. */
-export async function listEvents(fetchFn: FetchLike, token: string, timeMin: Date, timeMax: Date, max = 2500): Promise<{ items: GCalEvent[]; timeZone?: string }> {
+export async function listEvents(
+  fetchFn: FetchLike,
+  token: string,
+  timeMin: Date,
+  timeMax: Date,
+  max = 2500,
+): Promise<{ items: GCalEvent[]; timeZone?: string; truncated: boolean }> {
   const items: GCalEvent[] = [];
   let pageToken: string | undefined;
   let timeZone: string | undefined;
@@ -85,7 +91,8 @@ export async function listEvents(fetchFn: FetchLike, token: string, timeMin: Dat
     timeZone ??= page.timeZone;
     pageToken = page.nextPageToken;
   } while (pageToken && items.length < max);
-  return { items, timeZone };
+  // More pages existed than we fetched: the caller must not treat missing events as deleted.
+  return { items, timeZone, truncated: Boolean(pageToken) };
 }
 
 export async function getPrimaryCalendar(fetchFn: FetchLike, token: string) {

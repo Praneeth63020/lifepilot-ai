@@ -19,7 +19,21 @@ async function assertOwnedRefs(ctx: CoreContext, userId: string, input: { projec
     if (input.dependsOnTaskId === selfId) throw badRequest("A task cannot depend on itself");
     const d = await ctx.db.query.tasks.findFirst({ where: and(eq(tasks.id, input.dependsOnTaskId), eq(tasks.userId, userId)) });
     if (!d) throw notFound("Dependency task");
-    if (selfId && d.dependsOnTaskId === selfId) throw badRequest("Circular dependency");
+    if (selfId) {
+      // Walk the whole chain (A → B → C → …), not just one hop, so A → B → C → A is rejected too.
+      const seen = new Set<string>([d.id]);
+      let next = d.dependsOnTaskId;
+      while (next) {
+        if (next === selfId) throw badRequest("Circular dependency");
+        if (seen.has(next)) break; // pre-existing loop elsewhere; not ours to report
+        seen.add(next);
+        const t = await ctx.db.query.tasks.findFirst({
+          columns: { dependsOnTaskId: true },
+          where: and(eq(tasks.id, next), eq(tasks.userId, userId)),
+        });
+        next = t?.dependsOnTaskId ?? null;
+      }
+    }
   }
 }
 
@@ -113,18 +127,25 @@ export async function completeTask(ctx: CoreContext, userId: string, taskId: str
     let due = nextOccurrence(cur.dueAt, cur.recurrence, prefs.timezone);
     while (due && due <= now) due = nextOccurrence(due, cur.recurrence, prefs.timezone);
     if (due) {
-      const created = await createTask(ctx, userId, {
-        title: cur.title,
-        description: cur.description,
-        priority: cur.priority,
-        dueAt: due.toISOString(),
-        estimateMin: cur.estimateMin,
-        category: cur.category,
-        tags: cur.tags,
-        projectId: cur.projectId,
-        recurrence: cur.recurrence,
-        subtasks: cur.subtasks.map((s) => s.title),
-      });
+      // Keyed on the parent task (unique per user/source), so complete → reopen → complete
+      // returns the occurrence spawned the first time instead of creating a duplicate.
+      const created = await createTask(
+        ctx,
+        userId,
+        {
+          title: cur.title,
+          description: cur.description,
+          priority: cur.priority,
+          dueAt: due.toISOString(),
+          estimateMin: cur.estimateMin,
+          category: cur.category,
+          tags: cur.tags,
+          projectId: cur.projectId,
+          recurrence: cur.recurrence,
+          subtasks: cur.subtasks.map((s) => s.title),
+        },
+        { sourceType: "manual", sourceId: `recurrence:${cur.id}` },
+      );
       next = created.task;
     }
   }
@@ -178,8 +199,14 @@ export async function listTasks(
         : [sql`${tasks.dueAt} asc nulls last`, priorityOrder];
   const rows = await ctx.db.select().from(tasks).where(where).orderBy(...orderBy).limit(q.limit).offset(q.offset);
   const [{ count } = { count: 0 }] = await ctx.db.select({ count: sql<number>`count(*)::int` }).from(tasks).where(where);
-  const subs = rows.length
-    ? await ctx.db.query.subtasks.findMany({ where: inArray(subtasks.taskId, rows.map((r) => r.id)), orderBy: asc(subtasks.position) })
-    : [];
-  return { items: rows.map((r) => ({ ...r, subtasks: subs.filter((s) => s.taskId === r.id) })), total: count };
+  return { items: await attachSubtasks(ctx, rows), total: count };
+}
+
+/** Load subtasks for many tasks in one query (avoids one query per task). */
+export async function attachSubtasks(ctx: CoreContext, rows: TaskRow[]): Promise<TaskWithSubtasks[]> {
+  if (!rows.length) return [];
+  const subs = await ctx.db.query.subtasks.findMany({ where: inArray(subtasks.taskId, rows.map((r) => r.id)), orderBy: asc(subtasks.position) });
+  const byTask = new Map<string, SubtaskRow[]>();
+  for (const s of subs) byTask.set(s.taskId, [...(byTask.get(s.taskId) ?? []), s]);
+  return rows.map((r) => ({ ...r, subtasks: byTask.get(r.id) ?? [] }));
 }

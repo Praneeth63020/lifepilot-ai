@@ -102,6 +102,15 @@ export function parseGmailMessage(msg: GmailMessage): ParsedEmail {
   };
 }
 
+/**
+ * Mail that is not "incoming" for the user. messages.list excludes spam/trash by default but
+ * includes Sent and Drafts, which must never be analysed as if someone had asked the user something.
+ */
+export const EXCLUDED_LABELS = ["SENT", "DRAFT", "SPAM", "TRASH", "CHAT", "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"] as const;
+export function isExcludedMessage(labels: string[] | undefined): boolean {
+  return (labels ?? []).some((l) => (EXCLUDED_LABELS as readonly string[]).includes(l));
+}
+
 export async function getProfile(fetchFn: FetchLike, token: string) {
   return googleGet<{ emailAddress: string; historyId: string }>(fetchFn, `${BASE}/profile`, token);
 }
@@ -113,7 +122,7 @@ export async function getProfile(fetchFn: FetchLike, token: string) {
 export async function listRecentMessageIds(fetchFn: FetchLike, token: string, windowDays: number, max = 200): Promise<string[]> {
   const ids: string[] = [];
   let pageToken: string | undefined;
-  const q = `newer_than:${windowDays}d -category:promotions -category:social -in:chats`;
+  const q = `newer_than:${windowDays}d -category:promotions -category:social -in:chats -in:sent -in:drafts`;
   do {
     const u = new URL(`${BASE}/messages`);
     u.searchParams.set("q", q);
@@ -145,8 +154,7 @@ export async function listAddedSince(fetchFn: FetchLike, token: string, startHis
       }>(fetchFn, u.toString(), token);
       for (const h of page.history ?? []) {
         for (const m of h.messagesAdded ?? []) {
-          const labels = m.message.labelIds ?? [];
-          if (labels.includes("CATEGORY_PROMOTIONS") || labels.includes("CATEGORY_SOCIAL") || labels.includes("CHAT")) continue;
+          if (isExcludedMessage(m.message.labelIds)) continue;
           ids.add(m.message.id);
         }
       }

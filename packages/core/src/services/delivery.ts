@@ -11,6 +11,9 @@ export type DeliveryOutcome =
 
 type Reminder = typeof reminders.$inferSelect;
 
+/** Consecutive failures (other than "gone") after which a push subscription is dropped. */
+export const MAX_PUSH_FAILURES = 5;
+
 export function pickSound(prefs: Pick<Prefs, "notificationSound" | "escalateSounds">, r: Pick<Reminder, "kind" | "priority">): Sound {
   if (prefs.notificationSound === "none") return "none";
   if (!prefs.escalateSounds) return prefs.notificationSound;
@@ -97,11 +100,15 @@ export async function processReminderJob(ctx: CoreContext, data: { reminderId: s
 
   if (prefs.webPushEnabled) {
     const subs = await ctx.db.query.pushSubscriptions.findMany({ where: eq(pushSubscriptions.userId, r.userId) });
-    const [n] = await ctx.db
+    const key = `${keyPrefix}:web_push`;
+    const [inserted] = await ctx.db
       .insert(notifications)
-      .values({ ...base, channel: "web_push", status: "pending", idempotencyKey: `${keyPrefix}:web_push` })
+      .values({ ...base, channel: "web_push", status: "pending", idempotencyKey: key })
       .onConflictDoNothing()
       .returning();
+    // A retry after a crash between "row saved" and "push sent" finds the row still pending:
+    // send it now instead of treating it as a duplicate (which would lose the push forever).
+    const n = inserted ?? (await ctx.db.query.notifications.findFirst({ where: and(eq(notifications.idempotencyKey, key), eq(notifications.status, "pending")) }));
     if (!n) {
       channels.push({ channel: "web_push", status: "duplicate_suppressed" });
     } else if (!ctx.push.configured || subs.length === 0) {
@@ -119,6 +126,10 @@ export async function processReminderJob(ctx: CoreContext, data: { reminderId: s
         } else if (res.gone) {
           await ctx.db.delete(pushSubscriptions).where(eq(pushSubscriptions.id, s.id));
           errors.push("subscription expired (removed)");
+        } else if (s.failureCount + 1 >= MAX_PUSH_FAILURES) {
+          // Keeps failing without being reported gone (e.g. bad keys): stop retrying it on every reminder.
+          await ctx.db.delete(pushSubscriptions).where(eq(pushSubscriptions.id, s.id));
+          errors.push(`${res.error} (removed after ${MAX_PUSH_FAILURES} consecutive failures)`);
         } else {
           await ctx.db.update(pushSubscriptions).set({ failureCount: s.failureCount + 1 }).where(eq(pushSubscriptions.id, s.id));
           errors.push(res.error);

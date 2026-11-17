@@ -1,7 +1,8 @@
 import { Router } from "express";
-import { and, asc, eq, sql } from "drizzle-orm";
-import { projects, subtasks } from "@lifepilot/db";
+import { and, asc, eq, gte, inArray, ne, sql } from "drizzle-orm";
+import { projects, subtasks, tasks } from "@lifepilot/db";
 import {
+  AppError,
   completeTask,
   createTask,
   deleteTask,
@@ -14,11 +15,13 @@ import {
 } from "@lifepilot/core";
 import {
   projectCreateSchema,
+  projectUpdateSchema,
   subtaskCreateSchema,
   subtaskUpdateSchema,
   taskCreateSchema,
   taskListQuerySchema,
   taskUpdateSchema,
+  type ProjectDTO,
 } from "@lifepilot/shared";
 import { uid } from "../auth.js";
 import { idParam, parse } from "../http.js";
@@ -101,17 +104,89 @@ export function subtaskRoutes(ctx: CoreContext): Router {
 
 export function projectRoutes(ctx: CoreContext): Router {
   const r = Router();
+
+  /** Progress and deadline figures per project, derived from its tasks in two queries. */
+  async function withStats(userId: string, rows: (typeof projects.$inferSelect)[]): Promise<ProjectDTO[]> {
+    if (!rows.length) return [];
+    const now = ctx.now();
+    const ids = rows.map((p) => p.id);
+    const stats = await ctx.db
+      .select({
+        projectId: tasks.projectId,
+        open: sql<number>`count(*) filter (where ${tasks.status} = 'open')::int`,
+        done: sql<number>`count(*) filter (where ${tasks.status} = 'done')::int`,
+        overdue: sql<number>`count(*) filter (where ${tasks.status} = 'open' and ${tasks.dueAt} < ${now})::int`,
+        lastDue: sql<Date | null>`max(${tasks.dueAt}) filter (where ${tasks.status} = 'open')`,
+      })
+      .from(tasks)
+      .where(and(eq(tasks.userId, userId), inArray(tasks.projectId, ids)))
+      .groupBy(tasks.projectId);
+    // Earliest upcoming open deadline per project.
+    const next = await ctx.db
+      .selectDistinctOn([tasks.projectId], { projectId: tasks.projectId, taskId: tasks.id, title: tasks.title, dueAt: tasks.dueAt })
+      .from(tasks)
+      .where(and(eq(tasks.userId, userId), inArray(tasks.projectId, ids), eq(tasks.status, "open"), gte(tasks.dueAt, now)))
+      .orderBy(tasks.projectId, asc(tasks.dueAt));
+    const statBy = new Map(stats.map((x) => [x.projectId, x]));
+    const nextBy = new Map(next.map((x) => [x.projectId, x]));
+    return rows.map((p) => {
+      const st = statBy.get(p.id);
+      const nx = nextBy.get(p.id);
+      const lastDue = st?.lastDue ? new Date(st.lastDue) : null;
+      return {
+        id: p.id,
+        name: p.name,
+        color: p.color,
+        openTasks: st?.open ?? 0,
+        doneTasks: st?.done ?? 0,
+        overdueTasks: st?.overdue ?? 0,
+        nextDue: nx ? { taskId: nx.taskId, title: nx.title, dueAt: nx.dueAt!.toISOString() } : null,
+        lastDueAt: lastDue ? lastDue.toISOString() : null,
+      };
+    });
+  }
+
+  async function assertNameFree(userId: string, name: string, exceptId?: string) {
+    const clash = await ctx.db.query.projects.findFirst({
+      where: and(eq(projects.userId, userId), sql`lower(${projects.name}) = lower(${name})`, exceptId ? ne(projects.id, exceptId) : undefined),
+    });
+    if (clash) throw new AppError(409, "project_exists", `You already have a project called "${clash.name}"`);
+  }
+
   r.get("/", async (req, res) => {
-    const rows = await ctx.db.query.projects.findMany({ where: eq(projects.userId, uid(req)), orderBy: asc(projects.name) });
-    res.json({ items: rows.map((p) => ({ id: p.id, name: p.name, color: p.color })) });
+    const userId = uid(req);
+    const rows = await ctx.db.query.projects.findMany({ where: eq(projects.userId, userId), orderBy: asc(projects.name) });
+    res.json({ items: await withStats(userId, rows) });
+  });
+  r.get("/:id", async (req, res) => {
+    const userId = uid(req);
+    const p = await ctx.db.query.projects.findFirst({ where: and(eq(projects.id, idParam(req)), eq(projects.userId, userId)) });
+    if (!p) throw notFound("Project");
+    res.json((await withStats(userId, [p]))[0]);
   });
   r.post("/", async (req, res) => {
+    const userId = uid(req);
     const input = parse(projectCreateSchema, req.body);
-    const [p] = await ctx.db.insert(projects).values({ userId: uid(req), name: input.name, color: input.color ?? null }).returning();
-    res.status(201).json({ id: p!.id, name: p!.name, color: p!.color });
+    await assertNameFree(userId, input.name);
+    const [p] = await ctx.db.insert(projects).values({ userId, name: input.name, color: input.color ?? null }).returning();
+    res.status(201).json((await withStats(userId, [p!]))[0]);
+  });
+  r.patch("/:id", async (req, res) => {
+    const userId = uid(req);
+    const id = idParam(req);
+    const input = parse(projectUpdateSchema, req.body);
+    if (input.name !== undefined) await assertNameFree(userId, input.name, id);
+    const [p] = await ctx.db
+      .update(projects)
+      .set({ ...(input.name !== undefined ? { name: input.name } : {}), ...(input.color !== undefined ? { color: input.color ?? null } : {}) })
+      .where(and(eq(projects.id, id), eq(projects.userId, userId)))
+      .returning();
+    if (!p) throw notFound("Project");
+    res.json((await withStats(userId, [p]))[0]);
   });
   r.delete("/:id", async (req, res) => {
     const userId = uid(req);
+    // Tasks are kept: the foreign key clears their project (ON DELETE SET NULL).
     const [row] = await ctx.db.delete(projects).where(and(eq(projects.id, idParam(req)), eq(projects.userId, userId))).returning();
     if (!row) throw notFound("Project");
     res.status(204).end();

@@ -11,6 +11,9 @@ const optional = z
   .string()
   .optional()
   .transform((v) => (v && v.trim() ? v.trim() : undefined));
+const optionalEmail = z.preprocess((v) => (typeof v === "string" && v.trim() ? v.trim() : undefined), z.email().optional());
+// "Name <address>" or a bare address, on one line (a line break would let it inject mail headers).
+const MAILBOX = /^(?:[^<>\r\n]*<[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+>|[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+)$/;
 
 const envSchema = z
   .object({
@@ -19,6 +22,8 @@ const envSchema = z
     DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
     REDIS_URL: z.string().min(1, "REDIS_URL is required"),
     API_PORT: z.coerce.number().int().default(4000),
+    // Reverse proxies in front of the API (load balancer, nginx, …). Unset → 1 in production, 0 otherwise.
+    TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).optional(),
     API_URL: z.url().default("http://localhost:4000"),
     WEB_URL: z.url().default("http://localhost:5173"),
     MOBILE_DEEP_LINK_SCHEME: z.string().default("lifepilot"),
@@ -47,8 +52,16 @@ const envSchema = z
     VAPID_PUBLIC_KEY: optional,
     VAPID_PRIVATE_KEY: optional,
     VAPID_SUBJECT: z.string().default("mailto:admin@example.com"),
+    // Outgoing transactional email (verification, password reset, security notices). Any standard
+    // SMTP server: smtps://user:pass@host:465 (TLS) or smtp://user:pass@host:587 (STARTTLS).
     SMTP_URL: optional,
-    MAIL_FROM: z.string().default("LifePilot <no-reply@example.com>"),
+    MAIL_FROM: z.string().trim().regex(MAILBOX, 'MAIL_FROM must look like "LifePilot AI <no-reply@yourdomain.com>"').default("LifePilot AI <no-reply@example.com>"),
+    // Where replies to automated emails go. Defaults to SUPPORT_EMAIL.
+    MAIL_REPLY_TO: optionalEmail,
+    // Public support address shown on the website, in the app and in emails. Unset = none is shown.
+    SUPPORT_EMAIL: optionalEmail,
+    // Optional promise shown next to the support address, e.g. "within 2 business days".
+    SUPPORT_RESPONSE_TIME: z.preprocess((v) => (typeof v === "string" && v.trim() ? v.trim() : undefined), z.string().max(80).optional()),
   })
   .superRefine((env, ctx) => {
     if (env.AI_PROVIDER === "openai" && !env.OPENAI_API_KEY) {
@@ -60,6 +73,10 @@ const envSchema = z
     if (env.NODE_ENV === "production") {
       if (env.SESSION_SECRET.startsWith("replace-")) ctx.addIssue({ code: "custom", path: ["SESSION_SECRET"], message: "Placeholder SESSION_SECRET in production" });
       if (!env.SMTP_URL) ctx.addIssue({ code: "custom", path: ["SMTP_URL"], message: "SMTP_URL is required in production (verification and reset emails)" });
+      else if (!/^smtps?:\/\//.test(env.SMTP_URL)) ctx.addIssue({ code: "custom", path: ["SMTP_URL"], message: "SMTP_URL must start with smtps:// or smtp://" });
+      if (/@example\.(com|org|net)>?$/i.test(env.MAIL_FROM)) {
+        ctx.addIssue({ code: "custom", path: ["MAIL_FROM"], message: "MAIL_FROM still uses the example.com placeholder; use an address on your verified sending domain" });
+      }
       if (!env.API_URL.startsWith("https://") || !env.WEB_URL.startsWith("https://")) {
         ctx.addIssue({ code: "custom", path: ["API_URL"], message: "API_URL and WEB_URL must be https in production" });
       }
@@ -76,6 +93,7 @@ function buildConfig(env: z.infer<typeof envSchema>) {
     databaseUrl: env.DATABASE_URL,
     redisUrl: env.REDIS_URL,
     port: env.API_PORT,
+    trustProxyHops: env.TRUST_PROXY_HOPS ?? (env.NODE_ENV === "production" ? 1 : 0),
     apiUrl: env.API_URL.replace(/\/$/, ""),
     webUrl: env.WEB_URL.replace(/\/$/, ""),
     sessionSecret: env.SESSION_SECRET,
@@ -107,6 +125,9 @@ function buildConfig(env: z.infer<typeof envSchema>) {
         : null,
     smtpUrl: env.SMTP_URL,
     mailFrom: env.MAIL_FROM,
+    mailReplyTo: env.MAIL_REPLY_TO ?? env.SUPPORT_EMAIL ?? null,
+    supportEmail: env.SUPPORT_EMAIL ?? null,
+    supportResponseTime: env.SUPPORT_RESPONSE_TIME ?? null,
   };
 }
 

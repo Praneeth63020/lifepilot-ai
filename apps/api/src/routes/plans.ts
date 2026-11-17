@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { editPlanItems, generatePlan, getCurrentPlan, getPrefs, setPlanStatus, type CoreContext } from "@lifepilot/core";
+import { editPlanItems, generatePlan, getCurrentPlan, getPrefs, planDrift, setPlanStatus, type CoreContext } from "@lifepilot/core";
 import { localDate, planGenerateSchema, planItemsUpdateSchema } from "@lifepilot/shared";
 import { uid } from "../auth.js";
 import { idParam, parse } from "../http.js";
@@ -14,7 +14,7 @@ export function planRoutes(ctx: CoreContext): Router {
     const { date } = parse(z.object({ date: z.iso.date().optional() }), req.query);
     const prefs = await getPrefs(ctx, userId);
     const plan = await getCurrentPlan(ctx, userId, date ?? localDate(ctx.now(), prefs.timezone));
-    res.json({ plan: plan ? planDTO(plan) : null });
+    res.json({ plan: plan ? planDTO(plan, await planDrift(ctx, userId, plan)) : null });
   });
 
   r.post("/generate", async (req, res) => {

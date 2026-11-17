@@ -244,6 +244,55 @@ describe("authentication", () => {
     await anon.post("/api/v1/auth/login").send({ email: "erin@example.com", password: "new-password-456" }).expect(200);
     await anon.post("/api/v1/auth/reset-password").send({ token: resetToken, password: "another-pass-789" }).expect(400);
   });
+
+  describe("local development without SMTP", () => {
+    it("returns the reset and verification links to the page, since no email is sent", async () => {
+      const { app } = makeCtx({ env: "development" });
+      const { agent } = await signUp(app, "dev@example.com");
+      const anon = supertest.agent(app).set("x-lifepilot-csrf", "1");
+
+      const res = await anon.post("/api/v1/auth/request-password-reset").send({ email: "dev@example.com" }).expect(200);
+      const link = res.body.devMail.link as string;
+      expect(link).toMatch(/^http:\/\/localhost:5173\/reset-password\?token=[\w-]+$/);
+      // The link works.
+      const token = new URL(link).searchParams.get("token");
+      await anon.post("/api/v1/auth/reset-password").send({ token, password: "new-password-456" }).expect(200);
+      await anon.post("/api/v1/auth/login").send({ email: "dev@example.com", password: "new-password-456" }).expect(200);
+
+      // No account: says so (development only), with no link.
+      const ghost = await anon.post("/api/v1/auth/request-password-reset").send({ email: "ghost@example.com" }).expect(200);
+      expect(ghost.body).toEqual({ ok: true, devMail: { link: null } });
+
+      const verify = await agent.post("/api/v1/auth/login").send({ email: "dev@example.com", password: "new-password-456" }).expect(200)
+        .then(() => agent.post("/api/v1/auth/resend-verification").expect(200));
+      expect(verify.body.devMail.link).toMatch(/\/verify-email\?token=/);
+    });
+
+    it("never returns links through a proxy or tunnel", async () => {
+      const { app } = makeCtx({ env: "development" });
+      await signUp(app, "dev@example.com");
+      const res = await supertest(app)
+        .post("/api/v1/auth/request-password-reset")
+        .set("x-lifepilot-csrf", "1")
+        .set("x-forwarded-for", "203.0.113.9")
+        .send({ email: "dev@example.com" })
+        .expect(200);
+      expect(res.body).toEqual({ ok: true });
+    });
+
+    it("never returns links once SMTP is configured, or outside development", async () => {
+      const dev = makeCtx({ env: "development" });
+      dev.ctx.mailer = { configured: true, async send() {} };
+      await signUp(dev.app, "dev@example.com");
+      const a = await supertest(dev.app).post("/api/v1/auth/request-password-reset").set("x-lifepilot-csrf", "1").send({ email: "dev@example.com" }).expect(200);
+      expect(a.body).toEqual({ ok: true });
+
+      const test = makeCtx();
+      await signUp(test.app, "t@example.com");
+      const b = await supertest(test.app).post("/api/v1/auth/request-password-reset").set("x-lifepilot-csrf", "1").send({ email: "t@example.com" }).expect(200);
+      expect(b.body).toEqual({ ok: true });
+    });
+  });
 });
 
 describe("user data isolation", () => {

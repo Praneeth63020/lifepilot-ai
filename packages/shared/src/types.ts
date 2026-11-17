@@ -4,12 +4,26 @@ import type { Priority } from "./planner.js";
 
 export type Sound = "daily_chime" | "priority_alert" | "deadline_alert" | "none";
 
+/**
+ * Reply to "send me a reset/verification email". `devMail` appears only on a local development
+ * server with no SMTP configured, where the email would otherwise only reach the API log.
+ * `link` is null when no account has that email.
+ */
+export interface EmailRequestDTO {
+  ok: true;
+  devMail?: { link: string | null };
+}
+
 export interface AppConfigDTO {
   demoMode: boolean;
   googleConfigured: boolean;
   aiProvider: "mock" | "openai";
   webPushPublicKey: string | null;
   mailConfigured: boolean;
+  /** Public support address, only when SUPPORT_EMAIL is configured. */
+  supportEmail: string | null;
+  /** Expected reply time shown next to the support address, only when SUPPORT_RESPONSE_TIME is set. */
+  supportResponseTime: string | null;
 }
 
 export interface UserDTO {
@@ -85,6 +99,15 @@ export interface ProjectDTO {
   id: string;
   name: string;
   color: string | null;
+  /** Open tasks in this project. */
+  openTasks: number;
+  doneTasks: number;
+  /** Open tasks whose due time has passed. */
+  overdueTasks: number;
+  /** The earliest upcoming open deadline. */
+  nextDue: { taskId: string; title: string; dueAt: string } | null;
+  /** The latest due date among open tasks: when the remaining work is due to be finished. */
+  lastDueAt: string | null;
 }
 
 export interface CalendarEventDTO {
@@ -175,6 +198,8 @@ export interface DailyPlanDTO {
   warnings: string[];
   stats: { freeMinutes: number; scheduledTaskMinutes: number; requiredTodayMinutes: number };
   changes?: { taskId: string; title: string; change: "added" | "moved" | "removed"; from?: string; to?: string }[];
+  /** Why this saved plan no longer matches the calendar/tasks (computed when read). Empty if it still fits. */
+  drift: string[];
 }
 
 export interface ReminderDTO {
@@ -232,10 +257,16 @@ export interface DashboardDTO {
   deadlines: { taskId: string; title: string; dueAt: string; overdue: boolean }[];
   recentNotifications: NotificationDTO[];
   plan: DailyPlanDTO | null;
-  recommendations: string[];
+  recommendations: RecommendationDTO[];
   connections: ConnectionDTO[];
 }
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown };
+}
+
+/** A deterministic, explainable dashboard suggestion. `kind` lets the UI link to where it can be acted on. */
+export interface RecommendationDTO {
+  kind: "overdue" | "conflict" | "unclear_deadline" | "suspicious_email" | "no_estimate" | "not_planned" | "plan_outdated";
+  text: string;
 }

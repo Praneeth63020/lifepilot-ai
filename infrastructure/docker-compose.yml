@@ -29,13 +29,26 @@ services:
       interval: 5s
       retries: 10
 
+  # Optional local inbox: catches every email the API sends, nothing leaves your machine.
+  #   docker compose -f infrastructure/docker-compose.yml --profile mail up -d mailpit
+  # Then set SMTP_URL=smtp://localhost:1025 in .env, restart the API, and open http://localhost:8025.
+  mailpit:
+    profiles: ["mail"]
+    image: axllent/mailpit:v1.21.8
+    ports: ["1025:1025", "8025:8025"]
+
   api:
     profiles: ["app"]
     build: { context: .., dockerfile: infrastructure/Dockerfile, target: api }
     env_file: ../.env
+    # The "app" profile runs with NODE_ENV from .env (development) behind the web nginx on :8080,
+    # so links and OAuth redirects must point there, and nginx is one trusted proxy hop.
     environment:
       DATABASE_URL: postgresql://lifepilot:lifepilot@postgres:5432/lifepilot
       REDIS_URL: redis://redis:6379
+      API_URL: http://localhost:8080
+      WEB_URL: http://localhost:8080
+      TRUST_PROXY_HOPS: "1"
     ports: ["4000:4000"]
     depends_on:
       postgres: { condition: service_healthy }
@@ -48,6 +61,8 @@ services:
     environment:
       DATABASE_URL: postgresql://lifepilot:lifepilot@postgres:5432/lifepilot
       REDIS_URL: redis://redis:6379
+      API_URL: http://localhost:8080
+      WEB_URL: http://localhost:8080
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }

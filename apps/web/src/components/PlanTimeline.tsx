@@ -3,22 +3,23 @@ import type { PlanItemDTO } from "@lifepilot/shared";
 import { fmtTime, minutesLabel } from "../lib/format";
 
 const KIND_STYLE: Record<PlanItemDTO["kind"], { bar: string; label: string }> = {
-  event: { bar: "bg-muted/60", label: "Calendar event" },
+  event: { bar: "bg-blue", label: "Calendar event" },
   task: { bar: "bg-accent", label: "Suggested focus block" },
-  prep: { bar: "bg-warn", label: "Suggested preparation" },
-  break: { bar: "bg-ok", label: "Suggested break" },
+  prep: { bar: "bg-violet", label: "Suggested preparation" },
+  break: { bar: "bg-ok/70", label: "Suggested break" },
 };
 
-export function PlanTimeline({ items, tz, now = new Date(), compact }: { items: PlanItemDTO[]; tz: string; now?: Date; compact?: boolean }) {
+/** Agenda-style list of plan blocks. `label` names the list (default "Schedule"). */
+export function PlanTimeline({ items, tz, now = new Date(), compact, label = "Schedule" }: { items: PlanItemDTO[]; tz: string; now?: Date; compact?: boolean; label?: string }) {
   return (
-    <ol className="flex flex-col gap-1" aria-label="Schedule">
+    <ol className="flex flex-col gap-1" aria-label={label}>
       {items.map((i) => {
         const past = new Date(i.endAt) < now;
         const dur = Math.round((new Date(i.endAt).getTime() - new Date(i.startAt).getTime()) / 60000);
         const s = KIND_STYLE[i.kind];
         return (
           <li key={i.id} className={clsx("flex gap-3 rounded-lg px-2 py-1.5", past && "opacity-50")}>
-            <span className="w-16 shrink-0 pt-0.5 text-right font-mono text-xs text-muted">{fmtTime(i.startAt, tz)}</span>
+            <span className="w-16 shrink-0 pt-0.5 text-right text-xs tabular-nums text-muted">{fmtTime(i.startAt, tz)}</span>
             <span className={clsx("w-1 shrink-0 rounded", s.bar)} aria-hidden />
             <span className="min-w-0 flex-1">
               <span className="flex flex-wrap items-center gap-x-2 text-sm font-medium">

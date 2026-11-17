@@ -202,7 +202,13 @@ export async function cancelReminder(ctx: CoreContext, userId: string, reminderI
     .set({ status: "cancelled" })
     .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId), eq(reminders.status, "scheduled")))
     .returning();
-  if (row) await dequeue(ctx, row);
+  if (row) {
+    await dequeue(ctx, row);
+    return;
+  }
+  // Already fired or cancelled is fine (idempotent); a reminder that isn't the user's is not.
+  const exists = await ctx.db.query.reminders.findFirst({ columns: { id: true }, where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)) });
+  if (!exists) throw notFound("Reminder");
 }
 
 /** Re-enqueue every scheduled reminder (worker startup). Safe: job ids are deterministic. */

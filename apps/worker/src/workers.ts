@@ -21,10 +21,20 @@ export function startWorkers(ctx: CoreContext, connection: ConnectionOptions, pr
     { connection, prefix, concurrency: 10 },
   );
 
+  // Without an "error" listener, a Redis connection error is thrown and crashes the process.
+  reminderWorker.on("error", (err) => ctx.logger.error({ err }, "Reminder worker error"));
+
   // After the final retry fails, record the failure honestly instead of leaving it "scheduled" forever.
-  reminderWorker.on("failed", async (job, err) => {
+  reminderWorker.on("failed", (job, err) => {
     if (!job || job.attemptsMade < (job.opts.attempts ?? 1)) return;
     ctx.logger.error({ jobId: job.id, err }, "Reminder delivery failed permanently");
+    // Event handlers aren't awaited: catch here so a DB error can't become an unhandled rejection.
+    void recordPermanentFailure(job, err).catch((dbErr) =>
+      ctx.logger.error({ err: dbErr, jobId: job.id }, "Could not record permanent reminder failure"),
+    );
+  });
+
+  async function recordPermanentFailure(job: Job<ReminderJobData>, err: Error) {
     const r = await ctx.db.query.reminders.findFirst({ where: eq(reminders.id, job.data.reminderId) });
     if (!r || r.version !== job.data.version || r.status !== "scheduled") return;
     await ctx.db.update(reminders).set({ status: "fired", firedAt: ctx.now() }).where(eq(reminders.id, r.id));
@@ -46,7 +56,7 @@ export function startWorkers(ctx: CoreContext, connection: ConnectionOptions, pr
         idempotencyKey: `${r.id}:v${r.version}:failed`,
       })
       .onConflictDoNothing();
-  });
+  }
 
   const syncWorker = new Worker<SyncJobData>(
     SYNC_QUEUE,
@@ -57,6 +67,7 @@ export function startWorkers(ctx: CoreContext, connection: ConnectionOptions, pr
     },
     { connection, prefix, concurrency: 3 },
   );
+  syncWorker.on("error", (err) => ctx.logger.error({ err }, "Sync worker error"));
   syncWorker.on("failed", (job, err) => ctx.logger.warn({ jobId: job?.id, err: err?.message }, "Sync attempt failed"));
 
   return {

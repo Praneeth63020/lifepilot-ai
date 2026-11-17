@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "packageManager": "pnpm@10.28.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.9"
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @lifepilot/api --filter @lifepilot/worker --filter @lifepilot/web dev",
@@ -20,6 +20,8 @@
     "db:migrate:dev": "pnpm --filter @lifepilot/db migrate:dev",
     "db:seed": "pnpm --filter @lifepilot/api seed",
     "sounds": "node scripts/generate-sounds.mjs",
-    "audit": "pnpm audit --prod"
+    "audit": "pnpm audit --prod",
+    "mail:check": "pnpm --filter @lifepilot/api exec tsx ../../packages/core/scripts/mail-check.ts",
+    "smoke:openai": "pnpm --filter @lifepilot/api exec env DOTENV_CONFIG_PATH=../../.env DOTENV_CONFIG_QUIET=true tsx ../../packages/core/scripts/smoke-openai.ts"
   }
 }

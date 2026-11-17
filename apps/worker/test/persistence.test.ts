@@ -47,7 +47,7 @@ const ctx: CoreContext = {
   logger,
   jobs,
   extractor: new MockExtractor(),
-  mailer: createMailer(undefined, "x@example.com", logger),
+  mailer: createMailer(undefined, { from: "x@example.com" }, logger),
   push: createPushSender(null),
   fetch: async () => new Response("no network", { status: 599 }),
   now: () => new Date(),

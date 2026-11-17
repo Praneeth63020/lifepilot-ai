@@ -1,13 +1,13 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import type { Priority, TaskDTO } from "@lifepilot/shared";
+import type { Priority, ProjectDTO, TaskDTO } from "@lifepilot/shared";
 import { api, errorMessage } from "../api";
 import { isoToZoned, localISODate, zonedToISO } from "../lib/format";
 import { useTz } from "../session";
 import { useToast } from "./toast";
 import { Button, ErrorNote, Field, Input, Modal, Select, Textarea } from "./ui";
 
-export function TaskFormModal({ open, onClose, task }: { open: boolean; onClose: () => void; task?: TaskDTO | null }) {
+export function TaskFormModal({ open, onClose, task, defaultProjectId = null }: { open: boolean; onClose: () => void; task?: TaskDTO | null; defaultProjectId?: string | null }) {
   const tz = useTz();
   const qc = useQueryClient();
   const toast = useToast();
@@ -21,6 +21,8 @@ export function TaskFormModal({ open, onClose, task }: { open: boolean; onClose:
   const [tags, setTags] = useState(task?.tags.join(", ") ?? "");
   const [recurrence, setRecurrence] = useState(task?.recurrence ?? "none");
   const [subtasks, setSubtasks] = useState("");
+  const [projectId, setProjectId] = useState(task ? (task.projectId ?? "") : (defaultProjectId ?? ""));
+  const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.get<{ items: ProjectDTO[] }>("/projects"), staleTime: 30_000 });
 
   const m = useMutation({
     mutationFn: async () => {
@@ -31,7 +33,9 @@ export function TaskFormModal({ open, onClose, task }: { open: boolean; onClose:
         dueAt: dueDate ? zonedToISO(dueDate, dueTime || "23:59", tz) : null,
         estimateMin: estimate ? Number(estimate) : null,
         tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
-        recurrence,
+        // The Repeats control is disabled without a due date; don't submit a stale value.
+        recurrence: dueDate ? recurrence : "none",
+        projectId: projectId || null,
         ...(task ? {} : { subtasks: subtasks.split("\n").map((s) => s.trim()).filter(Boolean) }),
       };
       return task ? api.patch<TaskDTO>(`/tasks/${task.id}`, body) : api.post<TaskDTO>("/tasks", body);
@@ -88,6 +92,12 @@ export function TaskFormModal({ open, onClose, task }: { open: boolean; onClose:
           </Field>
           <Field label="Due time" htmlFor="t-dt">
             <Input id="t-dt" type="time" value={dueTime} disabled={!dueDate} onChange={(e) => setDueTime(e.target.value)} />
+          </Field>
+          <Field label="Project" htmlFor="t-proj" hint={projects.data?.items.length ? undefined : "Create projects from the Tasks page."}>
+            <Select id="t-proj" value={projectId} onChange={(e) => setProjectId(e.target.value)} disabled={!projects.data?.items.length}>
+              <option value="">No project</option>
+              {projects.data?.items.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </Select>
           </Field>
           <Field label="Tags" htmlFor="t-tags" hint="Comma separated">
             <Input id="t-tags" value={tags} onChange={(e) => setTags(e.target.value)} />

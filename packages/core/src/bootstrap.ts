@@ -1,5 +1,5 @@
 import { createDb } from "@lifepilot/db";
-import { BullJobScheduler, createRedis } from "@lifepilot/jobs";
+import { BullJobScheduler, createProducerRedis } from "@lifepilot/jobs";
 import { createExtractor } from "./ai/extractor.js";
 import type { Config } from "./config.js";
 import type { CoreContext } from "./context.js";
@@ -11,7 +11,7 @@ import { createPushSender } from "./push.js";
 export function createCoreContext(config: Config, name: string) {
   const logger = createLogger(config.logLevel, name);
   const { db, pool } = createDb(config.databaseUrl);
-  const redis = createRedis(config.redisUrl);
+  const redis = createProducerRedis(config.redisUrl);
   const jobs = new BullJobScheduler(redis);
   const ctx: CoreContext = {
     db,
@@ -19,7 +19,8 @@ export function createCoreContext(config: Config, name: string) {
     logger,
     jobs,
     extractor: createExtractor(config.ai, logger),
-    mailer: createMailer(config.smtpUrl, config.mailFrom, logger),
+    // In production, plain smtp:// must upgrade with STARTTLS or the send fails (never cleartext).
+    mailer: createMailer(config.smtpUrl, { from: config.mailFrom, replyTo: config.mailReplyTo, requireTLS: config.isProd }, logger),
     push: createPushSender(config.vapid),
     fetch: (input, init) => fetch(input, init),
     now: () => new Date(),

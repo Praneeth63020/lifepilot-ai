@@ -247,6 +247,8 @@ export const syncedEmails = pgTable(
   (t) => [
     uniqueIndex("synced_emails_unique").on(t.accountId, t.providerMessageId),
     index("synced_emails_user_received_idx").on(t.userId, t.receivedAt),
+    // Same-thread lookups for deadline-change detection.
+    index("synced_emails_user_thread_idx").on(t.userId, t.threadId),
   ],
 );
 
@@ -323,6 +325,8 @@ export const tasks = pgTable(
   },
   (t) => [
     index("tasks_user_status_idx").on(t.userId, t.status, t.dueAt),
+    // Project filter, and ON DELETE SET NULL when a project is removed.
+    index("tasks_project_idx").on(t.projectId),
     // Idempotency: one task per external source item per user.
     uniqueIndex("tasks_source_unique")
       .on(t.userId, t.sourceType, t.sourceId)
@@ -342,7 +346,9 @@ export const subtasks = pgTable("subtasks", {
   done: boolean("done").notNull().default(false),
   position: integer("position").notNull().default(0),
   createdAt: createdAt(),
-});
+},
+  (t) => [index("subtasks_task_idx").on(t.taskId, t.position)],
+);
 
 export const taskCompletions = pgTable("task_completions", {
   id: id(),
@@ -354,7 +360,9 @@ export const taskCompletions = pgTable("task_completions", {
     .references(() => users.id, { onDelete: "cascade" }),
   completedAt: ts("completed_at").notNull(),
   reopenedAt: ts("reopened_at"),
-});
+},
+  (t) => [index("task_completions_task_idx").on(t.taskId)],
+);
 
 export const calendarEvents = pgTable(
   "calendar_events",
@@ -385,6 +393,8 @@ export const calendarEvents = pgTable(
   },
   (t) => [
     index("calendar_events_user_time_idx").on(t.userId, t.startAt),
+    // Sync clean-up and ON DELETE CASCADE from connected accounts (the unique index is partial).
+    index("calendar_events_account_idx").on(t.accountId),
     uniqueIndex("calendar_events_provider_unique")
       .on(t.accountId, t.calendarId, t.providerEventId)
       .where(sql`${t.providerEventId} is not null`),
@@ -415,7 +425,13 @@ export const reminders = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("reminders_due_idx").on(t.status, t.remindAt)],
+  (t) => [
+    index("reminders_due_idx").on(t.status, t.remindAt),
+    index("reminders_user_status_idx").on(t.userId, t.status, t.remindAt),
+    // Per-task/event lookups and ON DELETE CASCADE from tasks and calendar events.
+    index("reminders_task_idx").on(t.taskId),
+    index("reminders_event_idx").on(t.eventId),
+  ],
 );
 
 export const notifications = pgTable(
@@ -441,7 +457,13 @@ export const notifications = pgTable(
     seenAt: ts("seen_at"),
     createdAt: createdAt(),
   },
-  (t) => [index("notifications_user_idx").on(t.userId, t.createdAt)],
+  (t) => [
+    index("notifications_user_idx").on(t.userId, t.createdAt),
+    // ON DELETE SET NULL from reminders, tasks and calendar events.
+    index("notifications_reminder_idx").on(t.reminderId),
+    index("notifications_task_idx").on(t.taskId),
+    index("notifications_event_idx").on(t.eventId),
+  ],
 );
 
 export const pushSubscriptions = pgTable("push_subscriptions", {
@@ -456,7 +478,9 @@ export const pushSubscriptions = pgTable("push_subscriptions", {
   failureCount: integer("failure_count").notNull().default(0),
   lastSuccessAt: ts("last_success_at"),
   createdAt: createdAt(),
-});
+},
+  (t) => [index("push_subscriptions_user_idx").on(t.userId)],
+);
 
 // ── Planning ──
 export const dailyPlans = pgTable(
@@ -494,7 +518,9 @@ export const dailyPlanItems = pgTable("daily_plan_items", {
   /** true = imported/confirmed fact (an existing event); false = suggestion */
   isFact: boolean("is_fact").notNull(),
   position: integer("position").notNull(),
-});
+},
+  (t) => [index("daily_plan_items_plan_idx").on(t.planId, t.position)],
+);
 
 export const auditLogs = pgTable(
   "audit_logs",

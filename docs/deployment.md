@@ -8,7 +8,7 @@ Three processes share one PostgreSQL and one Redis:
 ## Requirements
 
 - Managed PostgreSQL 16 (for example Neon, RDS, Cloud SQL or Supabase).
-- Managed Redis 7 **with persistence** and `maxmemory-policy noeviction` (for example Upstash with the eviction policy disabled, ElastiCache or Redis Cloud). Eviction would silently drop scheduled reminders. The worker re-enqueues everything still `scheduled` in Postgres on startup, but don't rely on that alone.
+- Managed Redis 7 **with persistence** and `maxmemory-policy noeviction` (for example Upstash with the eviction policy disabled, ElastiCache or Redis Cloud). Eviction would silently drop scheduled reminders. The worker re-enqueues everything still `scheduled` in Postgres on startup, but don't rely on that alone. Redis holds queued reminders, sync schedules and the shared rate-limit counters.
 - A host for long-running Node processes, such as Render, Railway, Fly.io, ECS or Cloud Run with min instances ≥ 1 for the worker.
 - HTTPS. Serve the web app and API on the **same site** (for example `app.example.com` and `api.example.com`, or one domain with `/api` proxied) so the SameSite=Lax session cookie is sent.
 
@@ -35,9 +35,9 @@ docker compose -f infrastructure/docker-compose.yml --profile app up -d --build
 
 - The `api` image runs migrations, then starts. With multiple replicas, run `node dist/scripts/migrate.js` as a one-off release step and start with `node dist/server.js`.
 - The `web` image is nginx serving the SPA and proxying `/api` to `http://api:4000`. Change `infrastructure/nginx.conf` for your topology.
-- Behind a load balancer, the API trusts one proxy hop in production (`trust proxy = 1`) for client IPs and secure cookies.
+- Set `TRUST_PROXY_HOPS` to the number of reverse proxies in front of the API (default: 1 in production, 0 otherwise). Rate limiting keys on the client IP, so a wrong value makes every user share one bucket. Example: Railway edge → nginx → API is `2`.
 
-> These Dockerfiles were written but not built in the development environment (no Docker daemon was available). The bundled `dist/` outputs and the hoisted `pnpm deploy` layout they use *were* run and verified.
+> **Verified 2026-11-15** (Docker 29, local, not deployed): all three images build; run together in production mode with their own Postgres and Redis they apply migrations, pass `/health/ready`, serve the SPA through nginx with its security and cache headers, handle sign-up and sign-in, keep rate-limit counters in Redis, and shut down cleanly on SIGTERM. No `.env` file is present in any image. Two defects found by this run were fixed: the API crashed after its first logged request (a second, bundled copy of `pino`), and the API container ignored SIGTERM (the shell started by `CMD` did not pass it on).
 
 ## Without Docker
 
@@ -58,7 +58,7 @@ node apps/worker/dist/main.js
   - `Reminder delivery failed permanently`
   - `Sync attempt failed`
   - `AI extraction failed; using rule-based fallback`
-- Failed jobs stay in Redis for 30 days. Inspect them with any BullMQ dashboard (for example `bull-board`) pointed at prefix `lifepilot`, queues `reminders` and `sync`.
+- Failed reminder jobs stay in Redis for 30 days; the sync queue keeps the last 1000 failed jobs. Inspect them with any BullMQ dashboard (for example `bull-board`) pointed at prefix `lifepilot`, queues `reminders` and `sync`.
 - In-app, users can see sync history (**Settings → Connections**) and delivery status per notification (**Notifications**).
 
 ## Mobile (phase 2, not built)
