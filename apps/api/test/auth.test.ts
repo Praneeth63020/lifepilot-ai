@@ -1,9 +1,15 @@
+import { eq } from "drizzle-orm";
+import { sessions } from "@lifepilot/db";
 import supertest from "supertest";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { closeDb, makeCtx, resetDb, signUp } from "./helpers.js";
+import { closeDb, FIXED_NOW, makeCtx, resetDb, signUp } from "./helpers.js";
 
 afterAll(closeDb);
 beforeEach(resetDb);
+
+const DAY = 24 * 3600_000;
+const sessionCookies = (header: string | string[] | undefined) =>
+  (Array.isArray(header) ? header : header ? [header] : []).filter((cookie) => cookie.startsWith("lp_session="));
 
 describe("authentication", () => {
   it("registers, keeps a session, logs out", async () => {
@@ -29,6 +35,179 @@ describe("authentication", () => {
     expect(cookie).toMatch(/HttpOnly/i);
     expect(cookie).toMatch(/SameSite=Lax/i);
     expect(JSON.stringify(res.body)).not.toMatch(/password/i);
+  });
+
+  it("renews the browser cookie when extending an active session", async () => {
+    const { app, ctx } = makeCtx();
+    const { agent, user } = await signUp(app, "sliding@example.com");
+
+    const session = await ctx.db.query.sessions.findFirst({
+      where: eq(sessions.userId, user.id),
+    });
+
+    if (!session) {
+      throw new Error("Test session was not created");
+    }
+
+    const oldLastSeenAt = new Date(FIXED_NOW.getTime() - 6 * 60_000);
+
+    await ctx.db
+      .update(sessions)
+      .set({
+        lastSeenAt: oldLastSeenAt,
+        expiresAt: new Date(FIXED_NOW.getTime() + 10 * 24 * 60 * 60_000),
+      })
+      .where(eq(sessions.id, session.id));
+
+    const response = await agent.get("/api/v1/auth/me").expect(200);
+
+    const header = response.headers["set-cookie"];
+    const cookies = Array.isArray(header) ? header : header ? [header] : [];
+    const renewedCookie = cookies.find((cookie) =>
+      cookie.startsWith("lp_session="),
+    );
+
+    expect(renewedCookie).toBeDefined();
+    expect(renewedCookie).toMatch(/Max-Age=2592000/i);
+    expect(renewedCookie).toMatch(/HttpOnly/i);
+    expect(renewedCookie).toMatch(/SameSite=Lax/i);
+    expect(renewedCookie).toMatch(/Path=\//i);
+
+    const updatedSession = await ctx.db.query.sessions.findFirst({
+      where: eq(sessions.id, session.id),
+    });
+
+    expect(updatedSession?.lastSeenAt.getTime()).toBe(FIXED_NOW.getTime());
+
+    expect(updatedSession?.expiresAt.getTime()).toBe(
+      FIXED_NOW.getTime() + 30 * 24 * 60 * 60_000,
+    );
+  });
+
+  it("does not renew the cookie when activity is within five minutes", async () => {
+    const { app, ctx } = makeCtx();
+    const { agent, user } = await signUp(app, "recent@example.com");
+
+    const session = await ctx.db.query.sessions.findFirst({
+      where: eq(sessions.userId, user.id),
+    });
+
+    if (!session) {
+      throw new Error("Test session was not created");
+    }
+
+    const recentLastSeenAt = new Date(FIXED_NOW.getTime() - 2 * 60_000);
+    const existingExpiry = new Date(
+      FIXED_NOW.getTime() + 10 * 24 * 60 * 60_000,
+    );
+
+    await ctx.db
+      .update(sessions)
+      .set({
+        lastSeenAt: recentLastSeenAt,
+        expiresAt: existingExpiry,
+      })
+      .where(eq(sessions.id, session.id));
+
+    const response = await agent.get("/api/v1/auth/me").expect(200);
+
+    expect(response.headers["set-cookie"]).toBeUndefined();
+
+    const unchangedSession = await ctx.db.query.sessions.findFirst({
+      where: eq(sessions.id, session.id),
+    });
+
+    expect(unchangedSession?.lastSeenAt.getTime()).toBe(
+      recentLastSeenAt.getTime(),
+    );
+
+    expect(unchangedSession?.expiresAt.getTime()).toBe(
+      existingExpiry.getTime(),
+    );
+  });
+
+  it("does not renew an expired session", async () => {
+    const { app, ctx } = makeCtx();
+    const { agent, user } = await signUp(app, "expired@example.com");
+
+    const session = await ctx.db.query.sessions.findFirst({
+      where: eq(sessions.userId, user.id),
+    });
+
+    if (!session) {
+      throw new Error("Test session was not created");
+    }
+
+    const expiredAt = new Date(FIXED_NOW.getTime() - 1);
+    const oldLastSeenAt = new Date(FIXED_NOW.getTime() - 10 * 60_000);
+
+    await ctx.db
+      .update(sessions)
+      .set({
+        lastSeenAt: oldLastSeenAt,
+        expiresAt: expiredAt,
+      })
+      .where(eq(sessions.id, session.id));
+
+    await agent.get("/api/v1/auth/me").expect(401);
+
+    const unchangedSession = await ctx.db.query.sessions.findFirst({
+      where: eq(sessions.id, session.id),
+    });
+
+    expect(unchangedSession?.lastSeenAt.getTime()).toBe(
+      oldLastSeenAt.getTime(),
+    );
+
+    expect(unchangedSession?.expiresAt.getTime()).toBe(expiredAt.getTime());
+  });
+
+  it("never extends a session past 90 days after sign-in", async () => {
+    const { app, ctx } = makeCtx();
+    const { agent, user } = await signUp(app, "capped@example.com");
+    const createdAt = new Date(FIXED_NOW.getTime() - 89 * DAY);
+
+    await ctx.db
+      .update(sessions)
+      .set({ createdAt, lastSeenAt: new Date(FIXED_NOW.getTime() - 6 * 60_000), expiresAt: new Date(FIXED_NOW.getTime() + 12 * 3600_000) })
+      .where(eq(sessions.userId, user.id));
+
+    const response = await agent.get("/api/v1/auth/me").expect(200);
+    const renewedCookie = sessionCookies(response.headers["set-cookie"])[0];
+
+    // One day left until the 90-day cap, not a fresh 30 days.
+    expect(renewedCookie).toMatch(/Max-Age=86400;/);
+    const updated = await ctx.db.query.sessions.findFirst({ where: eq(sessions.userId, user.id) });
+    expect(updated?.expiresAt.getTime()).toBe(createdAt.getTime() + 90 * DAY);
+  });
+
+  it("rejects a session older than 90 days even if it was extended before", async () => {
+    const { app, ctx } = makeCtx();
+    const { agent, user } = await signUp(app, "too-old@example.com");
+
+    await ctx.db
+      .update(sessions)
+      .set({ createdAt: new Date(FIXED_NOW.getTime() - 90 * DAY - 60_000), expiresAt: new Date(FIXED_NOW.getTime() + 10 * DAY) })
+      .where(eq(sessions.userId, user.id));
+
+    await agent.get("/api/v1/auth/me").expect(401);
+  });
+
+  it("clears the cookie on logout even when the same request renews the session", async () => {
+    const { app, ctx } = makeCtx();
+    const { agent, user } = await signUp(app, "idle-logout@example.com");
+
+    await ctx.db
+      .update(sessions)
+      .set({ lastSeenAt: new Date(FIXED_NOW.getTime() - 6 * 60_000) })
+      .where(eq(sessions.userId, user.id));
+
+    const response = await agent.post("/api/v1/auth/logout").expect(204);
+    const cookies = sessionCookies(response.headers["set-cookie"]);
+
+    // Browsers apply Set-Cookie headers in order, so the clearing one must come last.
+    expect(cookies.at(-1)).toMatch(/^lp_session=;.*Expires=Thu, 01 Jan 1970/);
+    await agent.get("/api/v1/auth/me").expect(401);
   });
 
   it("rejects duplicate emails, weak passwords and bad credentials", async () => {

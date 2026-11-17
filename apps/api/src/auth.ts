@@ -5,7 +5,10 @@ import { authTokens, sessions, users } from "@lifepilot/db";
 import { AppError, randomToken, sha256, type CoreContext } from "@lifepilot/core";
 
 export const SESSION_COOKIE = "lp_session";
+/** Sliding idle timeout: each active period pushes expiry this far ahead. */
 const SESSION_TTL_MS = 30 * 24 * 3600_000;
+/** Absolute cap: however active, a session ends this long after sign-in (limits a stolen cookie's life). */
+export const SESSION_MAX_AGE_MS = 90 * 24 * 3600_000;
 export const CSRF_HEADER = "x-lifepilot-csrf";
 
 declare global {
@@ -30,13 +33,13 @@ export function getDummyHash() {
   return dummyHash;
 }
 
-function cookieOptions(ctx: CoreContext) {
+function cookieOptions(ctx: CoreContext, maxAge = SESSION_TTL_MS) {
   return {
     httpOnly: true,
     secure: ctx.config.isProd,
     sameSite: "lax" as const,
     path: "/",
-    maxAge: SESSION_TTL_MS,
+    maxAge,
   };
 }
 
@@ -59,19 +62,30 @@ export async function destroySession(ctx: CoreContext, req: Request, res: Respon
 
 /** Resolve the session cookie (if any) into req.userId. Never trusts a client-supplied user id. */
 export function sessionMiddleware(ctx: CoreContext): RequestHandler {
-  return async (req, _res, next) => {
+  return async (req, res, next) => {
     const token = req.cookies?.[SESSION_COOKIE];
     if (typeof token === "string" && token.length > 20) {
       const id = sha256(token);
-      const s = await ctx.db.query.sessions.findFirst({ where: and(eq(sessions.id, id), gt(sessions.expiresAt, ctx.now())) });
+      const now = ctx.now();
+      const s = await ctx.db.query.sessions.findFirst({
+        where: and(
+          eq(sessions.id, id),
+          gt(sessions.expiresAt, now),
+          // Absolute cap, also for sessions extended before the cap existed.
+          gt(sessions.createdAt, new Date(now.getTime() - SESSION_MAX_AGE_MS)),
+        ),
+      });
       if (s) {
         req.userId = s.userId;
         req.sessionId = s.id;
-        if (ctx.now().getTime() - s.lastSeenAt.getTime() > 5 * 60_000) {
-          await ctx.db
-            .update(sessions)
-            .set({ lastSeenAt: ctx.now(), expiresAt: new Date(ctx.now().getTime() + SESSION_TTL_MS) })
-            .where(eq(sessions.id, s.id));
+        if (now.getTime() - s.lastSeenAt.getTime() > 5 * 60_000) {
+          // Slide the expiry forward, but never past the absolute cap.
+          const expiresAt = new Date(Math.min(now.getTime() + SESSION_TTL_MS, s.createdAt.getTime() + SESSION_MAX_AGE_MS));
+
+          await ctx.db.update(sessions).set({ lastSeenAt: now, expiresAt }).where(eq(sessions.id, s.id));
+
+          // Renew the browser cookie along with the database session, expiring at the same moment.
+          res.cookie(SESSION_COOKIE, token, cookieOptions(ctx, expiresAt.getTime() - now.getTime()));
         }
       }
     }
